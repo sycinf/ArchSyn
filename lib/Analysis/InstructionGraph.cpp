@@ -146,9 +146,9 @@ void InstructionGraph::addToInstructionGraph(Instruction *I, std::vector<BasicBl
 }
 
 void InstructionGraph::getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.addRequiredTransitive<DominatorTree>();
-    AU.addRequired<PostDominatorTree>();
-    AU.addRequired<LoopInfo>();
+    AU.addRequiredTransitive<DominatorTreeWrapperPass>();
+    AU.addRequiredTransitive<PostDominatorTree>();
+    AU.addRequiredTransitive<LoopInfo>();
     AU.setPreservesAll();
 }
 
@@ -156,16 +156,13 @@ void InstructionGraph::getAnalysisUsage(AnalysisUsage &AU) const {
 
 
 bool InstructionGraph::runOnFunction(Function &M) {
-  Func = &M;
+    Func = &M;
 
-  ExternalInsNode = getOrInsertInstruction(0);
-  //assert(!CallsExternalNode);
-  //CallsExternalNode = new CallGraphNode(0);
-  Root = ExternalInsNode;
-
-
-
-for(Function::iterator BB=M.begin(), BBE = M.end(); BB != BBE; ++BB)
+    ExternalInsNode = getOrInsertInstruction(0);
+    //assert(!CallsExternalNode);
+    //CallsExternalNode = new CallGraphNode(0);
+    Root = ExternalInsNode;
+    for(Function::iterator BB=M.begin(), BBE = M.end(); BB != BBE; ++BB)
 {
     TerminatorInst* curBBTerm =  BB->getTerminator();
     unsigned numSuc = curBBTerm->getNumSuccessors();
@@ -183,17 +180,15 @@ for(Function::iterator BB=M.begin(), BBE = M.end(); BB != BBE; ++BB)
         curSucPredecessors->push_back(&(*BB));
     }
 }
-
-
-PostDominatorTree* PDT = getAnalysisIfAvailable<PostDominatorTree>();
-LoopInfo* LI = getAnalysisIfAvailable<LoopInfo>();
-for (Function::iterator BB = M.begin(), BBE = M.end(); BB != BBE; ++BB)
+    PostDominatorTree* PDT = getAnalysisIfAvailable<PostDominatorTree>();
+    LoopInfo* LI = getAnalysisIfAvailable<LoopInfo>();
+    for (Function::iterator BB = M.begin(), BBE = M.end(); BB != BBE; ++BB)
 {
   BasicBlock* curBBPtr = &(*BB);
   std::vector<BasicBlock*>* earliestPred=0;
   if(BasicBlock2Predecessors.find(curBBPtr)==BasicBlock2Predecessors.end())
   {
-      assert (M.getEntryBlock() == curBBPtr);
+      assert (&(M.getEntryBlock()) == curBBPtr);
 
   }
   else
@@ -214,10 +209,10 @@ for (Function::iterator BB = M.begin(), BBE = M.end(); BB != BBE; ++BB)
   delete earliestPred;
   errs()<<BB->getName()<<"\t" <<ExternalInsNode->DependentInstructions.size()<<" root dep\n";
 }
-// we should have all the node
-errs()<<InstructionMap.size()<< " instructions added as graph nodes\n";
+    // we should have all the node
+    errs()<<InstructionMap.size()<< " instructions added as graph nodes\n";
 
-  return false;
+    return false;
 }
 
 INITIALIZE_PASS(InstructionGraph, "basicig", "InstructionGraph Construction", false, true)
@@ -229,14 +224,6 @@ void InstructionGraph::releaseMemory() {
   if (InstructionMap.empty())
     return;
 
-// Reset all node's use counts to zero before deleting them to prevent an
-// assertion from firing.
-/*#ifndef NDEBUG
-  for (InstructionMapTy::iterator I = InstructionMap.begin(), E = InstructionMap.end();
-       I != E; ++I)
-    I->second->allReferencesDropped();
-#endif
-*/
   for (InstructionMapTy::iterator I = InstructionMap.begin(), E = InstructionMap.end();
       I != E; ++I)
     delete I->second;
@@ -244,7 +231,7 @@ void InstructionGraph::releaseMemory() {
 }
 
 
-void InstructionGraph::print(raw_ostream &OS, const Function*) const {
+void InstructionGraph::print(raw_ostream &OS, const Module*) const {
 
   for (InstructionGraph::const_iterator I = begin(), E = end(); I != E; ++I)
     I->second->print(OS);

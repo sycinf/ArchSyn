@@ -131,7 +131,7 @@ public:
   virtual bool runOnFunction(Function &F);
   virtual void releaseMemory();
 
-  void print(raw_ostream &o, const Function* = 0) const;
+  void print(raw_ostream &o, const Module* = 0) const;
   void dump() const;
 };
 

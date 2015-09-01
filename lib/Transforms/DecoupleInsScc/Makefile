@@ -1,6 +1,6 @@
 
 LEVEL = ../../..
-LIBRARYNAME = LLVMGenSynthC
+LIBRARYNAME = LLVMDecoupleInsScc
 LOADABLE_MODULE = 1
 USEDLIBS =
 
@@ -8,7 +8,7 @@ USEDLIBS =
 # from the hello plugin.
 ifneq ($(REQUIRES_RTTI), 1)
 ifneq ($(REQUIRES_EH), 1)
-EXPORTED_SYMBOL_FILE = $(PROJ_SRC_DIR)/GenSynthC.exports
+EXPORTED_SYMBOL_FILE = $(PROJ_SRC_DIR)/DecoupleInsScc.exports
 endif
 endif
 
