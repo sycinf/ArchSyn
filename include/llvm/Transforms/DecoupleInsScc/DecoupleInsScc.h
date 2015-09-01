@@ -1,0 +1,4 @@
+#ifndef DECOUPLEINSSCC_H
+#define DECOUPLEINSSCC_H
+
+#endif // DECOUPLEINSSCC_H
