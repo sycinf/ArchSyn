@@ -75,15 +75,17 @@ namespace {
     struct DAGPartition
     {
 
-        std::vector<BasicBlock*> singleSucBBs;
-        // a partition contains a set of dagNode
         std::vector<DAGNode*> partitionContent;
-        // let's add the pointer to the maps
-        bool containMemory;
-        bool containLongLatCyc;
 
         bool cycleDetectCovered;
+
+        /*******************properties of this particular partition **************/
+        bool containMemory;
+        bool containLongLatCyc;
         struct DecoupleInsScc* top;
+
+
+        /******************data structure facilitating transformations ***********/
         // return instruction if it is here, 0 if it is not
         Instruction* rInsn;
         // since the partition only contains a subset of basic blocks
@@ -91,6 +93,7 @@ namespace {
         // e.g. in the original cfg: A->B->C, and only A and C are in
         // in partition, we have a map which maps B to C
         std::map<BasicBlock*,BasicBlock*> partitionBranchRemap;
+        std::vector<BasicBlock*> singleSucBBs;
         // the dominator for all basicblocks in this partition
         // the entry block for this partition will be here
         BasicBlock* dominator;
