@@ -249,7 +249,7 @@ namespace boost{
             addPathBBsToBBMap(sourceBBs,dominator,AllBBs,dominator);
             addPathBBsToBBMap(insBBs,dominator,AllBBs,dominator);
             // now  we do the n^2 check to see if anybody goes to anybody else?
-            for(BBMapIter bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
+            for(auto bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
                 //std::vector<BasicBlock*> curPathStorage;
@@ -271,18 +271,18 @@ namespace boost{
                 // basic blocks gets added for the reason that
                 // they are the predecessor which tells phi what
                 // value to output
-                std::vector<Instruction*>* curBBInsns = bmi->second;
+                std::set<Instruction*>* curBBInsns = bmi->second;
                 addPhiOwner2Vector(curBBInsns, AllBBs);
             }
 
             // a special pass to search for every insBB and srcBB themselves
-            for(BBMapIter bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
+            for(auto bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
                 // search all its successor
                 addPathToSelf(curBB,AllBBs,dominator);
             }
-            for(BBMapIter bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
+            for(auto bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
                 addPathToSelf(curBB,AllBBs,dominator);
@@ -351,12 +351,12 @@ namespace boost{
             //BBMap2Ins*  srcBBs = (top->srcBBsInPartition)[this];
             //BBMap2Ins*  insBBs = (top->insBBsInPartition)[this];
             std::set<BasicBlock*> allRealBBs;
-            for(BBMapIter bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
+            for(auto bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
                 allRealBBs.insert(curBB);
             }
-            for(BBMapIter bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
+            for(auto bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
                 allRealBBs.insert(curBB);
@@ -364,7 +364,7 @@ namespace boost{
                 // now if this is generating a result based on incoming edges
                 // then the basic block incoming edge should be counted as real
                 // and always be preserved.
-                std::vector<Instruction*>* curBBInsns = insBBs[curBB];
+                std::set<Instruction*>* curBBInsns = insBBs[curBB];
                 addPhiOwner2Vector(curBBInsns, allRealBBs);
 
             }
@@ -408,7 +408,7 @@ namespace boost{
                     std::vector<BasicBlock*> curBranchKeeper;
                     // from this edge, we find next keeper
                     BasicBlock* brSuccessor = termIns->getSuccessor(brInd);
-                    std::vector<BasicBlock*> seenBBs;
+                    std::set<BasicBlock*> seenBBs;
                     search4NextKeeper( brSuccessor, allKeepers, curBranchKeeper, seenBBs, AllBBs );
                     assert(!(curBranchKeeper.size()>1) &&
                            "a non-included basic block diverge to multiple \
@@ -502,11 +502,10 @@ namespace boost{
         }
         bool terminatorNotLocal(BasicBlock* curBB)
         {
-            std::vector<Instruction*>* actualIns = 0;
+            std::set<Instruction*>* actualIns = 0;
             if(insBBs.find(curBB)!=insBBs.end())
                 actualIns = insBBs[curBB];
-            return (actualIns==0 ||
-                     std::find(actualIns->begin(),actualIns->end(),curBB->getTerminator())==actualIns->end());
+            return (actualIns==0 || !(actualIns->count(curBB->getTerminator())));
         }
 
 
@@ -516,14 +515,14 @@ namespace boost{
         }
         bool hasActualInstruction(Instruction* target)
         {
+            bool haveIns = false;
             BasicBlock* curBB = target->getParent();
             if(insBBs.find(curBB)!=insBBs.end())
             {
-                std::vector<Instruction*>* actualIns =insBBs[curBB];
-                if(std::find(actualIns->begin(),actualIns->end(),target)!=actualIns->end())
-                    return true;
+                std::set<Instruction*>* actualIns =insBBs[curBB];
+                haveIns = actualIns->count(target);
             }
-            return false;
+            return haveIns;
         }
         bool receiverPartitionsExist(Instruction* insPt)
         {
@@ -574,8 +573,8 @@ namespace boost{
             if(isFlowOnlyBB(curBB))
                 return;
             // now look at the actual content blocks
-            std::vector<Instruction*>* srcIns = 0;
-            std::vector<Instruction*>* actualIns = 0;
+            std::set<Instruction*>* srcIns = 0;
+            std::set<Instruction*>* actualIns = 0;
             if(sourceBBs.find(curBB)!=sourceBBs.end())
                 srcIns = sourceBBs[curBB];
             if(insBBs.find(curBB)!=insBBs.end())
@@ -590,13 +589,13 @@ namespace boost{
             for(BasicBlock::iterator insPt = curBB->begin(), insEnd = curBB->end();
                 insPt != insEnd; insPt++)
             {
-                if(srcIns!=0 && !(std::find(srcIns->begin(),srcIns->end(), insPt)==srcIns->end()))
-                    if(actualIns==0 || (actualIns!=0 && (std::find(actualIns->begin(),actualIns->end(),insPt)==actualIns->end())))
+                if(srcIns!=0 && srcIns->count(insPt))
+                    if(actualIns==0 || (actualIns!=0 && !actualIns->count(insPt)))
                     {
                         Instruction* curInsPtr = insPt;
                         srcInstruction.insert(curInsPtr);
                     }
-                if(actualIns!=0 && !(std::find(actualIns->begin(),actualIns->end(),insPt)==actualIns->end()))
+                if(actualIns!=0 &&  actualIns->count(insPt))
                 {
                     bool iAmSender = true;
                     std::vector<DAGPartition*>* allOwners=top->getPartitionFromIns(insPt);

@@ -16,7 +16,7 @@ struct DAGPartition;
 
 
 typedef std::map<DAGNode*, std::vector<DAGPartition*>*> DagNode2PartitionMap;
-typedef std::map<BasicBlock*, std::vector<Instruction*>*> BBMap2Ins;
+typedef std::map<BasicBlock*, std::set<Instruction*>*> BBMap2Ins;
 typedef BBMap2Ins::iterator BBMapIter;
 
 static BasicBlock* findDominator(BasicBlock* originalDominator,std::set<BasicBlock*>& allBBs, DominatorTree* DT)
@@ -35,7 +35,7 @@ static BasicBlock* findDominator(BasicBlock* originalDominator,std::set<BasicBlo
 static BasicBlock* findDominator(BasicBlock* originalDominator,BBMap2Ins& mapOfBBs,DominatorTree* DT )
 {
    std::set<BasicBlock*> allBBs;
-   for(BBMapIter bmi = mapOfBBs.begin(), bme = mapOfBBs.end(); bmi!=bme; ++bmi)
+   for(auto bmi = mapOfBBs.begin(), bme = mapOfBBs.end(); bmi!=bme; ++bmi)
    {
        BasicBlock* curBB=bmi->first;
        allBBs.insert(curBB);
@@ -67,18 +67,15 @@ static void addBBInsToMap(BBMap2Ins& map, Instruction* curIns)
     BBMapIter I = map.find(bbKey);
     if(I== map.end())
     {
-        std::vector<Instruction*>* curBBIns = new std::vector<Instruction*>();
-        curBBIns->push_back(curIns);
+        std::set<Instruction*>* curBBIns = new std::set<Instruction*>();
+        curBBIns->insert(curIns);
         map[bbKey] = curBBIns;
     }
     else
     {
-        std::vector<Instruction*>*& curBBIns = map[bbKey];
+        std::set<Instruction*>*& curBBIns = map[bbKey];
         // now check if it is already included
-        if(std::find(curBBIns->begin(),curBBIns->end(),curIns )== curBBIns->end())
-        {
-            curBBIns->push_back(curIns);
-        }
+        curBBIns->insert(curIns);
     }
 }
 
@@ -163,17 +160,17 @@ static void mergePath2BBIntoStorage(BasicBlock* src,BasicBlock* dest, BasicBlock
 
 static void addPathBBsToBBMap(BBMap2Ins& dstBBs, BasicBlock* startBB, std::set<BasicBlock*>& AllBBs,BasicBlock* domInter)
 {
-    for(BBMapIter bmi = dstBBs.begin(), bme = dstBBs.end(); bmi!=bme; ++bmi)
+    for(auto bmi = dstBBs.begin(), bme = dstBBs.end(); bmi!=bme; ++bmi)
     {
         BasicBlock* dest=bmi->first;
         mergePath2BBIntoStorage(startBB,dest,domInter,AllBBs);
     }
 }
-static void addPhiOwner2Vector(std::vector<Instruction*>* curBBInsns, std::set<BasicBlock*>& add2Vector)
+static void addPhiOwner2Vector(std::set<Instruction*>* curBBInsns, std::set<BasicBlock*>& add2Vector)
 {
-    for(unsigned int insInd = 0; insInd < curBBInsns->size(); insInd++)
+    for(auto insPtrIter = curBBInsns->begin(); insPtrIter!=curBBInsns->end(); insPtrIter++)
     {
-        Instruction* curIns = curBBInsns->at(insInd);
+        Instruction* curIns = *insPtrIter;
         if(isa<PHINode>(*curIns))
         {
             PHINode* curPhiIns = (PHINode*)(curIns);
@@ -238,12 +235,12 @@ static void searchToFindKeeper(BasicBlock* curSeed, BasicBlock* curPred, BB2BBVe
     }
 }
 static void search4NextKeeper(BasicBlock* brSuccessor, std::vector<BasicBlock*>&allKeepers, std::vector<BasicBlock*>&curBranchKeeper,
-                              std::vector<BasicBlock*>&seenBBs, std::set<BasicBlock*>&allBBs )
+                              std::set<BasicBlock*>&seenBBs, std::set<BasicBlock*>&allBBs )
 {
     // seen it before, we return
-    if(std::find(seenBBs.begin(),seenBBs.end(), brSuccessor)!=seenBBs.end())
+    if(seenBBs.count(brSuccessor))
         return;
-    seenBBs.push_back(brSuccessor);
+    seenBBs.insert(brSuccessor);
     // if this is outside current partition, its sort of a keeper...
     bool toAdd = false;
     if(!allBBs.count(brSuccessor))
