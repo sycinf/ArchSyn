@@ -90,6 +90,7 @@ static void findAllSrcIns(Instruction* actualIns, std::vector<Instruction*>& src
         Value* curOp = actualIns->getOperand(opInd);
         if(isa<Instruction>(*curOp))
         {
+            assert(!isa<TerminatorInst>(*curOp) && "source instruction is a terminator!");
             Instruction* srcIns = &(cast<Instruction>(*curOp));
             if(std::find(srcInsns.begin(),srcInsns.end(),srcIns)==srcInsns.end())
                 srcInsns.push_back(srcIns);

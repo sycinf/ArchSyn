@@ -59,6 +59,12 @@ namespace boost{
         void checkAcyclicDependency();
         bool DFSFindPartitionCycle(DAGPartition* dp);
         virtual void getAnalysisUsage(AnalysisUsage &AU) const;
+        std::vector<DAGPartition*>* getPartitionFromIns(Instruction* ins)
+        {
+            DAGNode* node = dagNodeMap[const_cast<Instruction*>(ins)];
+            std::vector<DAGPartition*>* part = dagPartitionMap[const_cast<DAGNode*>(node)];
+            return part;
+        }
     };
 
     struct DAGNode
@@ -458,12 +464,210 @@ namespace boost{
                 }
             }
         }
+
+        void moveDominatorToHead()
+        {
+            BasicBlock* domBB = AllBBs.at(0);
+            DominatorTree* DT= &(top->getAnalysisIfAvailable<DominatorTreeWrapperPass>()->getDomTree());
+            for(unsigned int bbInd = 1; bbInd < AllBBs.size(); bbInd++)
+            {
+                domBB = DT->findNearestCommonDominator(domBB,AllBBs.at(bbInd));
+            }
+            // the dominator must be inside the list
+            std::vector<BasicBlock*>::iterator domIter = std::find(AllBBs.begin(),AllBBs.end(),domBB);
+            assert(domIter!=AllBBs.end());
+            assert(domBB == dominator);
+            AllBBs.erase(domIter);
+            AllBBs.insert(AllBBs.begin(),dominator);
+        }
+        bool allExitOutsideLoop()
+        {
+            LoopInfo* li = top->getAnalysisIfAvailable<LoopInfo>();
+            for(unsigned int bbInd = 1; bbInd < AllBBs.size(); bbInd++)
+            {
+                BasicBlock* curBB = AllBBs.at(bbInd);
+                TerminatorInst* curTerm = curBB->getTerminator();
+                for(unsigned sucInd = 0; sucInd < curTerm->getNumSuccessors(); sucInd++)
+                {
+                    BasicBlock* curSuc = curTerm->getSuccessor(sucInd);
+                    if(std::find(AllBBs.begin(),AllBBs.end(),curSuc) == AllBBs.end())
+                    {
+                        if(li->getLoopDepth(curSuc)!=0)
+                            return false;
+                    }
+                }
+            }
+            return true;
+        }
+        bool isFlowOnlyBB(BasicBlock* curBB)
+        {
+            return (sourceBBs.find(curBB)==sourceBBs.end() && insBBs.find(curBB)==insBBs.end());
+        }
+        bool terminatorNotLocal(BasicBlock* curBB)
+        {
+            std::vector<Instruction*>* actualIns = 0;
+            if(insBBs.find(curBB)!=insBBs.end())
+                actualIns = insBBs[curBB];
+            return (actualIns==0 ||
+                     std::find(actualIns->begin(),actualIns->end(),curBB->getTerminator())==actualIns->end());
+        }
+
+
+        bool needBranchTag(BasicBlock* curBB)
+        {
+            return (std::find(singleSucBBs.begin(),singleSucBBs.end(),curBB)==singleSucBBs.end());
+        }
+        bool hasActualInstruction(Instruction* target)
+        {
+            BasicBlock* curBB = target->getParent();
+            if(insBBs.find(curBB)!=insBBs.end())
+            {
+                std::vector<Instruction*>* actualIns =insBBs[curBB];
+                if(std::find(actualIns->begin(),actualIns->end(),target)!=actualIns->end())
+                    return true;
+            }
+            return false;
+        }
+        bool receiverPartitionsExist(Instruction* insPt)
+        {
+            if(insPt->isTerminator()&& !isa<ReturnInst>(*insPt))
+            {
+                // are there other partitions having the same basicblock
+                // we will need to pass the branch tag over as long as it is
+                // the case
+                for(unsigned sid = 0; sid < top->collectedPartition.size(); sid++)
+                {
+                    DAGPartition* destPart = top->collectedPartition.at(sid);
+                    if(this != destPart && !destPart->hasActualInstruction(insPt))
+                    {
+                        if(std::find(destPart->AllBBs.begin(),destPart->AllBBs.end(),insPt->getParent())!=destPart->AllBBs.end()
+                                &&destPart->needBranchTag(insPt->getParent()))
+                            return true;
+                    }
+                }
+            }
+            else
+            {
+                for(Value::use_iterator curUser = insPt->use_begin(), endUser = insPt->use_end(); curUser != endUser; ++curUser )
+                {
+                    assert(isa<Instruction>(*curUser));
+                    // now multiple guy can use this value
+
+                    std::vector<DAGPartition*>* curUseOwners=top->getPartitionFromIns(cast<Instruction>(*curUser));
+                    // we will iterate through each partition in the vector
+                    for(unsigned int s = 0; s < curUseOwners->size(); s++)
+                    {
+                        DAGPartition* curUsePart = curUseOwners->at(s);
+                        if(curUsePart != this  && !curUsePart->hasActualInstruction(insPt))
+                            return true;
+                    }
+                }
+            }
+            return false;
+
+        }
+
+        void collectPartitionFuncArgPerBB(std::set<Value*>& topFuncArg,
+                                          std::set<Instruction*>& srcInstruction,
+                                          std::set<Instruction*>& instToSend,
+                                          BasicBlock* curBB)
+        {
+            if( terminatorNotLocal(curBB) && needBranchTag(curBB)
+                    && !isa<ReturnInst>(*(curBB->getTerminator())))
+                srcInstruction.insert(curBB->getTerminator());
+            // if this is flow only, nothing to do anymore
+            if(isFlowOnlyBB(curBB))
+                return;
+            // now look at the actual content blocks
+            std::vector<Instruction*>* srcIns = 0;
+            std::vector<Instruction*>* actualIns = 0;
+            if(sourceBBs.find(curBB)!=sourceBBs.end())
+                srcIns = sourceBBs[curBB];
+            if(insBBs.find(curBB)!=insBBs.end())
+                actualIns = insBBs[curBB];
+            // we look at each instruction, if the instruction is src Ins
+            // but not in the actualIns we just add it to the srcInstruction set,
+            // if it is an actual
+            // instruction, we check to see if it is reading anything from
+            // argument list of function, if it does, we add tat to the topFuncArg
+            // also if it is an actual and the real owner is this partition, we
+            // add the instruction to instToSend
+            for(BasicBlock::iterator insPt = curBB->begin(), insEnd = curBB->end();
+                insPt != insEnd; insPt++)
+            {
+                if(srcIns!=0 && !(std::find(srcIns->begin(),srcIns->end(), insPt)==srcIns->end()))
+                    if(actualIns==0 || (actualIns!=0 && (std::find(actualIns->begin(),actualIns->end(),insPt)==actualIns->end())))
+                    {
+                        Instruction* curInsPtr = insPt;
+                        srcInstruction.insert(curInsPtr);
+                    }
+                if(actualIns!=0 && !(std::find(actualIns->begin(),actualIns->end(),insPt)==actualIns->end()))
+                {
+                    bool iAmSender = true;
+                    std::vector<DAGPartition*>* allOwners=top->getPartitionFromIns(insPt);
+                    DAGPartition* realOwner = allOwners->at(0);
+                    if(realOwner!=this)
+                        iAmSender = false;
+                    // we check the first member of the dag 2 partition map
+                    // if it is not me, then I aint sender
+
+                    if(iAmSender)
+                    {
+                        if(receiverPartitionsExist(insPt))
+                            instToSend.insert(insPt);
+                    }
+                    // if we are using function argument, we need to add that too
+                    // iterate through insPt's operand
+                    for(unsigned int opInd = 0; opInd < insPt->getNumOperands(); opInd++)
+                    {
+                        Value* curOp = insPt->getOperand(opInd);
+                        if(isa<Argument>(*curOp))
+                            topFuncArg.insert(curOp);
+                    }
+                }
+            }
+        }
+
+        void collectPartitionFuncArguments(std::set<Value*>& topFuncArg,
+                                           std::set<Instruction*>& srcInstruction,
+                                           std::set<Instruction*>& instToSend)
+        {
+            for(unsigned int bbInd = 0; bbInd < AllBBs.size(); bbInd++)
+            {
+                BasicBlock* curBB = AllBBs.at(bbInd);
+                collectPartitionFuncArgPerBB(topFuncArg,srcInstruction,instToSend,curBB);
+            }
+        }
+        Function* addFunctionSignature(std::set<Value*>& topFuncArg,
+                                       std::set<Instruction*>& srcInstruction,
+                                       std::set<Instruction*>& instToSend)
+        {
+            return 0;
+        }
+
         void generateDecoupledFunction(int seqNum)
         {
             // we collect all the basic blocks
             // and remove what ever redundant BasicBlocks
             generateBBList();
             trimBBList();
+            /**** some check to run to ensure the cfg is properly formed***/
+            moveDominatorToHead();
+            if (top->controlFlowDuplication)
+            {
+                assert(allExitOutsideLoop() && "some basic blocks fan out to non-included basic blocks \
+                                               inside a loop, shouldn't happen when control flow is \
+                                                is duplicated\n");
+            }
+            /**** end of check ************/
+            std::set<Value*> topFuncArg;
+            std::set<Instruction*> srcInstFromOtherPart;
+            std::set<Instruction*> instToOtherPart;
+            collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart);
+            Function* addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart);
+            // now we iterate through the basic block list and generate the basic blocks
+
+
             // got to collect the argument types
 //SHAOYI: this is the new part
 /*            Function* topFunction = top->targetFunc;
@@ -485,174 +689,6 @@ namespace boost{
 
 
 
-        /*
-        void trimBBList()
-        {
-            BB2BBVectorMapTy* predMap = top->getAnalysis<InstructionGraph>().getPredecessorMap();
-            PostDominatorTree* PDT = top->getAnalysisIfAvailable<PostDominatorTree>();
-            //DominatorTree* DT= top->getAnalysisIfAvailable<DominatorTree>();
-            // we can iterate through every block
-            // in the allBBs list
-            // if a basicblock A  is of no instruction --- only exist for flow
-            // purpose, we then look at to see if it should be discarded
-            // how do we do it?
-            // all these are assumed to be redundant
-            // we then have a queue of keepers -- starting from all realBBs,
-            // we iterate until this queue is empty,
-            // we take an iterm off this queue
-            // traverse backward from it(currentR), for the path, if we
-            // see a non real BB(nRBB), we check if currentR postdominate nRBB
-            // if the answr is no, then nRBB is a keeper, the path is done,
-            // and nRBB is added to the keeper queue,
-
-            std::vector<BasicBlock*>* allBBs = (top->allBBsInPartition)[this];
-            BBMap2Ins*  srcBBs = (top->srcBBsInPartition)[this];
-            BBMap2Ins*  insBBs = (top->insBBsInPartition)[this];
-            std::vector<BasicBlock*> allRealBBs;
-            for(BBMapIter bmi = srcBBs->begin(), bme = srcBBs->end(); bmi!=bme; ++bmi)
-            {
-                BasicBlock* curBB=bmi->first;
-                allRealBBs.push_back(curBB);
-
-            }
-            for(BBMapIter bmi = insBBs->begin(), bme = insBBs->end(); bmi!=bme; ++bmi)
-            {
-                BasicBlock* curBB=bmi->first;
-                if(srcBBs->find(curBB)==srcBBs->end()) // if curBB was not in srcBB
-                    allRealBBs.push_back(curBB);
-
-                // now if this is generating a result based on incoming edges
-                // then the basic block incoming edge should be counted as real
-                // and always be preserved.
-                std::vector<Instruction*>* curBBInsns = (*insBBs)[curBB];
-                addPhiOwner2Vector(curBBInsns, &allRealBBs);
-
-            }
-            std::vector<BasicBlock*> toRemove = (*allBBs);
-
-
-            // queue for blocks to keep
-            std::vector<BasicBlock*> toKeep;
-            std::vector<BasicBlock*> allKeepers;
-            toKeep.insert(toKeep.begin(),allRealBBs.begin(),allRealBBs.end());
-
-            while(toKeep.size()>0)
-            {
-
-                BasicBlock* curSeed = toKeep.back();
-                toKeep.pop_back();
-                allKeepers.push_back(curSeed);
-                // search backwards from curSeed, until there is a keeper
-                // all everything is seen
-                std::vector<BasicBlock*> seenBBs;
-                seenBBs.push_back(curSeed);
-
-                if(predMap->find(curSeed)!=predMap->end())
-                {
-                    std::vector<BasicBlock*>* curPreds = (*predMap)[curSeed];
-
-                    for(unsigned int cPred = 0; cPred < curPreds->size(); cPred++)
-                    {
-                        BasicBlock* curPred = curPreds->at(cPred);
-                        searchToFindKeeper(curSeed, curPred,predMap, toKeep, allKeepers, seenBBs,PDT, allBBs );
-                    }
-                }
-
-            }
-
-            // we now try to build the remap
-            // we start from one keeper, look for the next keeper in dfs way
-            // realize every keeper is a divergent point
-            // from a outgoing edge of an keeper, there can be only one keeper
-            //this->partitionBranchRemap
-            //errs()<<"======keeper=====\n";
-            for(unsigned int keeperInd = 0; keeperInd < allKeepers.size();keeperInd++)
-            {
-                BasicBlock* curKeeper = allKeepers.at(keeperInd);
-                //errs()<<curKeeper->getName()<<" ";
-                TerminatorInst* termIns = curKeeper->getTerminator();
-                int numOutEdge = termIns->getNumSuccessors();
-
-                for(unsigned int brInd = 0; brInd<numOutEdge; brInd++)
-                {
-                    std::vector<BasicBlock*> curBranchKeeper;
-                    // from this edge, we find next keeper
-                    BasicBlock* brSuccessor = termIns->getSuccessor(brInd);
-                    std::vector<BasicBlock*> seenBBs;
-                    search4NextKeeper( brSuccessor, allKeepers, curBranchKeeper, seenBBs, *allBBs );
-
-                    if(curBranchKeeper.size()>1)
-                    {
-                        errs()<<"more than one dest\n";
-                        exit(1);
-                    }
-                    else if(curBranchKeeper.size()==0)
-                    {
-                        // this is an error coz if a keeper is branching somwhere but
-                        // got nothing, something is wrong
-                        errs()<<"no dest from keeper\n";
-                        exit(1);
-                    }
-                    else
-                    {
-                        this->partitionBranchRemap[brSuccessor] = curBranchKeeper.at(0);
-                    }
-
-                }
-                // now remove this keeper from toRemove
-                std::vector<BasicBlock*>::iterator rmKeeperIter = std::find(toRemove.begin(),toRemove.end(),curKeeper);
-                if(rmKeeperIter==toRemove.end())
-                {
-                    errs()<<"somehow not found\n";
-                    exit(1);
-                }
-                    // must be found
-                toRemove.erase(rmKeeperIter);
-
-            }
-            // now actually remove it
-            for(unsigned int trind = 0; trind < toRemove.size(); trind++)
-            {
-                BasicBlock* bb2Remove = toRemove.at(trind);
-                std::vector<BasicBlock*>::iterator found = std::find(allBBs->begin(),allBBs->end(),bb2Remove);
-                errs()<<(*found)->getName()<<" removed " <<"\n";
-                allBBs->erase(found);
-            }
-            // we shall build a map of basicblocks who now only have
-            // one successor -- meaning they do not need to get remote branchtag
-            // traverse every block, check their destination (with remap)
-            // if it is a single
-
-            for(unsigned int allBBInd=0; allBBInd<allBBs->size(); allBBInd++)
-            {
-                BasicBlock* curBB = allBBs->at(allBBInd);
-                TerminatorInst* curTermInst = curBB->getTerminator();
-                if(!isa<ReturnInst>(*curTermInst))
-                {
-                    int numSuc = curTermInst->getNumSuccessors();
-                    bool sameDestDu2Remap = true;
-                    BasicBlock* firstDst = curTermInst->getSuccessor(0);
-                    if(partitionBranchRemap.find(firstDst)!=partitionBranchRemap.end())
-                        firstDst = partitionBranchRemap[firstDst];
-                    for(unsigned int i = 1; i<numSuc; i++)
-                    {
-                        BasicBlock* curDst = curTermInst->getSuccessor(i);
-                        if(partitionBranchRemap.find(curDst)!=partitionBranchRemap.end())
-                            curDst = partitionBranchRemap[curDst];
-                        if(curDst!=firstDst)
-                        {
-                            sameDestDu2Remap = false;
-                            break;
-                        }
-
-                    }
-                    if(sameDestDu2Remap)
-                        singleSucBBs.push_back(curBB);
-                }
-            }
-        }
-
-        */
         /*
         // this is to be invoked right after the srcBB and insBB are established
         void optimizeBBByDup(BBMap2Ins* srcBBs,BBMap2Ins* insBBs)
