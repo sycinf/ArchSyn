@@ -19,12 +19,12 @@ typedef std::map<DAGNode*, std::vector<DAGPartition*>*> DagNode2PartitionMap;
 typedef std::map<BasicBlock*, std::vector<Instruction*>*> BBMap2Ins;
 typedef BBMap2Ins::iterator BBMapIter;
 
-static BasicBlock* findDominator(BasicBlock* originalDominator,std::vector<BasicBlock*>& allBBs, DominatorTree* DT)
+static BasicBlock* findDominator(BasicBlock* originalDominator,std::set<BasicBlock*>& allBBs, DominatorTree* DT)
 {
     BasicBlock* dominator = originalDominator;
-    for(unsigned int BBind = 0; BBind < allBBs.size(); BBind++)
+    for(auto bbIter = allBBs.begin(); bbIter!=allBBs.end(); bbIter++)
     {
-        BasicBlock* curBB = allBBs.at(BBind);
+        BasicBlock* curBB = *bbIter;
         if(dominator!=0)
             dominator = DT->findNearestCommonDominator(dominator, curBB);
         else
@@ -34,11 +34,11 @@ static BasicBlock* findDominator(BasicBlock* originalDominator,std::vector<Basic
 }
 static BasicBlock* findDominator(BasicBlock* originalDominator,BBMap2Ins& mapOfBBs,DominatorTree* DT )
 {
-   std::vector<BasicBlock*> allBBs;
+   std::set<BasicBlock*> allBBs;
    for(BBMapIter bmi = mapOfBBs.begin(), bme = mapOfBBs.end(); bmi!=bme; ++bmi)
    {
        BasicBlock* curBB=bmi->first;
-       allBBs.push_back(curBB);
+       allBBs.insert(curBB);
    }
    return findDominator(originalDominator,allBBs,DT);
 }
@@ -82,7 +82,7 @@ static void addBBInsToMap(BBMap2Ins& map, Instruction* curIns)
     }
 }
 
-static void findAllSrcIns(Instruction* actualIns, std::vector<Instruction*>& srcInsns)
+static void findAllSrcIns(Instruction* actualIns, std::set<Instruction*>& srcInsns)
 {
     unsigned int numOp = actualIns->getNumOperands();
     for(unsigned int opInd = 0; opInd < numOp; opInd++)
@@ -92,34 +92,30 @@ static void findAllSrcIns(Instruction* actualIns, std::vector<Instruction*>& src
         {
             assert(!isa<TerminatorInst>(*curOp) && "source instruction is a terminator!");
             Instruction* srcIns = &(cast<Instruction>(*curOp));
-            if(std::find(srcInsns.begin(),srcInsns.end(),srcIns)==srcInsns.end())
-                srcInsns.push_back(srcIns);
+            srcInsns.insert(srcIns);
         }
     }
 }
 
 static void addSrcIns(Instruction* actualIns, BBMap2Ins& sourceBBs)
 {
-    std::vector<Instruction*> allSrcIns;
+    std::set<Instruction*> allSrcIns;
     findAllSrcIns(actualIns,allSrcIns);
     for(unsigned int insInd = 0; insInd < allSrcIns.size(); insInd++)
+    for(auto srcInsIter = allSrcIns.begin(); srcInsIter != allSrcIns.end(); srcInsIter++)
     {
-        Instruction* srcIns = allSrcIns.at(insInd);
+        Instruction* srcIns = *srcInsIter;
         addBBInsToMap(sourceBBs,srcIns);
-
     }
 }
 
-static void mergeInto(const std::vector<BasicBlock*>& small, std::vector<BasicBlock*>& big)
+static void mergeInto(const std::vector<BasicBlock*>& small, std::set<BasicBlock*>& big)
 {
     //errs()<<"into merge";
-    for(unsigned int pathInd=0; pathInd < small.size(); pathInd++)
+    for(auto bbIter = small.begin(); bbIter!= small.end(); bbIter++)
     {
-       BasicBlock* curPathBB = small.at(pathInd);
-       if(std::find(big.begin(),big.end(),curPathBB)==big.end())
-       {
-           big.push_back(curPathBB);
-       }
+       BasicBlock* curPathBB = *bbIter;
+       big.insert(curPathBB);
     }
 //errs()<<" outo merge";
 }
@@ -158,14 +154,14 @@ static bool searchToBasicBlock(std::vector<BasicBlock*>& storage,
 }
 
 static void mergePath2BBIntoStorage(BasicBlock* src,BasicBlock* dest, BasicBlock* domInter,
-                                    std::vector<BasicBlock*>& storage)
+                                    std::set<BasicBlock*>& storage)
 {
     std::vector<BasicBlock*> tmpStorage;
     if(searchToBasicBlock(tmpStorage,src,dest,domInter))
         mergeInto(tmpStorage,storage);
 }
 
-static void addPathBBsToBBMap(BBMap2Ins& dstBBs, BasicBlock* startBB, std::vector<BasicBlock*>& AllBBs,BasicBlock* domInter)
+static void addPathBBsToBBMap(BBMap2Ins& dstBBs, BasicBlock* startBB, std::set<BasicBlock*>& AllBBs,BasicBlock* domInter)
 {
     for(BBMapIter bmi = dstBBs.begin(), bme = dstBBs.end(); bmi!=bme; ++bmi)
     {
@@ -173,7 +169,7 @@ static void addPathBBsToBBMap(BBMap2Ins& dstBBs, BasicBlock* startBB, std::vecto
         mergePath2BBIntoStorage(startBB,dest,domInter,AllBBs);
     }
 }
-static void addPhiOwner2Vector(std::vector<Instruction*>* curBBInsns, std::vector<BasicBlock*>& add2Vector)
+static void addPhiOwner2Vector(std::vector<Instruction*>* curBBInsns, std::set<BasicBlock*>& add2Vector)
 {
     for(unsigned int insInd = 0; insInd < curBBInsns->size(); insInd++)
     {
@@ -184,13 +180,12 @@ static void addPhiOwner2Vector(std::vector<Instruction*>* curBBInsns, std::vecto
             for(unsigned int inBlockInd = 0; inBlockInd<curPhiIns->getNumIncomingValues();inBlockInd++)
             {
                 BasicBlock* curPred = curPhiIns->getIncomingBlock(inBlockInd);
-                if(std::find(add2Vector.begin(),add2Vector.end(),curPred)==add2Vector.end())
-                    add2Vector.push_back(curPred);
+                add2Vector.insert(curPred);
             }
         }
     }
 }
-static void addPathToSelf(BasicBlock* curBB,std::vector<BasicBlock*>& AllBBs, BasicBlock* dominator)
+static void addPathToSelf(BasicBlock* curBB,std::set<BasicBlock*>& AllBBs, BasicBlock* dominator)
 {
     int numSuc = curBB->getTerminator()->getNumSuccessors();
     for(int sucInd = 0; sucInd<numSuc; sucInd++)
@@ -202,7 +197,7 @@ static void addPathToSelf(BasicBlock* curBB,std::vector<BasicBlock*>& AllBBs, Ba
 
 static void searchToFindKeeper(BasicBlock* curSeed, BasicBlock* curPred, BB2BBVectorMapTy* predMap,
                                std::vector<BasicBlock*>& toKeep, std::vector<BasicBlock*>& allKeepers,
-                               std::vector<BasicBlock*>& seenBBs, PostDominatorTree* PDT, std::vector<BasicBlock*>& allBBs )
+                               std::vector<BasicBlock*>& seenBBs, PostDominatorTree* PDT, std::set<BasicBlock*>& allBBs )
 {
     if(std::find(seenBBs.begin(), seenBBs.end(),curPred)!=seenBBs.end())
     {
@@ -210,7 +205,7 @@ static void searchToFindKeeper(BasicBlock* curSeed, BasicBlock* curPred, BB2BBVe
         return;
     }
     // if not even in the partition, we dont care
-    if(std::find(allBBs.begin(),allBBs.end(),curPred)==allBBs.end())
+    if(!allBBs.count(curPred))
         return;
 
     // if it is already a keeper, then we stop
@@ -243,7 +238,7 @@ static void searchToFindKeeper(BasicBlock* curSeed, BasicBlock* curPred, BB2BBVe
     }
 }
 static void search4NextKeeper(BasicBlock* brSuccessor, std::vector<BasicBlock*>&allKeepers, std::vector<BasicBlock*>&curBranchKeeper,
-                              std::vector<BasicBlock*>&seenBBs, std::vector<BasicBlock*>&allBBs )
+                              std::vector<BasicBlock*>&seenBBs, std::set<BasicBlock*>&allBBs )
 {
     // seen it before, we return
     if(std::find(seenBBs.begin(),seenBBs.end(), brSuccessor)!=seenBBs.end())
@@ -251,7 +246,7 @@ static void search4NextKeeper(BasicBlock* brSuccessor, std::vector<BasicBlock*>&
     seenBBs.push_back(brSuccessor);
     // if this is outside current partition, its sort of a keeper...
     bool toAdd = false;
-    if(std::find(allBBs.begin(),allBBs.end(),brSuccessor)==allBBs.end())
+    if(!allBBs.count(brSuccessor))
     {
         toAdd = true;
     }
@@ -273,15 +268,12 @@ static void search4NextKeeper(BasicBlock* brSuccessor, std::vector<BasicBlock*>&
         // start next hop
         TerminatorInst* termIns = brSuccessor->getTerminator();
         int numOutEdge = termIns->getNumSuccessors();
-        if(numOutEdge==0)
-        {
-            // this is going nowhere, so it must be a keeper right?
-            // lets say if it is not a keeper, it is definitely a flow only block
-            // why would a bb with no successor be a flow only block? it cant
-            // so it is not true -- this cannot happen
-            errs()<<"a non-keeper exit block\n";
-            exit(1);
-        }
+        // this is going nowhere, so it must be a keeper right?
+        // lets say if it is not a keeper, it is definitely a flow only block
+        // why would a bb with no successor be a flow only block? it cant
+        // so it is not true -- this cannot happen
+        assert(numOutEdge!=0 && "a terminator with no successor ");
+
         for(unsigned int brInd = 0; brInd<numOutEdge; brInd++)
         {
             BasicBlock* nextSuccessor = termIns->getSuccessor(brInd);

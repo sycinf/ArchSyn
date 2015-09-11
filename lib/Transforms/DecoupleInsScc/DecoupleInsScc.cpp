@@ -118,7 +118,7 @@ namespace boost{
         // e.g. in the original cfg: A->B->C, and only A and C are in
         // in partition, we have a map which maps B to C
         std::map<BasicBlock*,BasicBlock*> partitionBranchRemap;
-        std::vector<BasicBlock*> singleSucBBs;
+        std::set<BasicBlock*> singleSucBBs;
         // the dominator for all basicblocks in this partition
         // the entry block for this partition will be here
         BasicBlock* dominator;
@@ -130,7 +130,7 @@ namespace boost{
         BBMap2Ins insBBs;
         // all relevant BBs, including insBB and sourceBB and
         // all the necessary BBs for control flow purpose
-        std::vector<BasicBlock*> AllBBs;
+        std::set<BasicBlock*> AllBBs;
 
         void init(struct DecoupleInsScc* tt )
         {
@@ -243,7 +243,7 @@ namespace boost{
 
             // naturally if we have everything within one BB, we just need that BB
             // some of these BBs wont be in the map, in which case, we just need the terminator
-            AllBBs.push_back(dominator);
+            AllBBs.insert(dominator);
 
             // add the path from the dominator to all the sourceBBs
             addPathBBsToBBMap(sourceBBs,dominator,AllBBs,dominator);
@@ -303,10 +303,11 @@ namespace boost{
                 {
                     // actual implementation, all the strongly connected basic blocks involving
                     // anybody in the AllBBs need to be included
-                    std::vector<BasicBlock*> cpAllBBs = AllBBs;
-                    for(unsigned int existingBBInd = 0; existingBBInd < cpAllBBs.size(); existingBBInd++)
+                    std::set<BasicBlock*> cpAllBBs = AllBBs;
+                    for(std::set<BasicBlock*>::iterator existingBBIter = cpAllBBs.begin();
+                        existingBBIter!=cpAllBBs.end();existingBBIter++)
                     {
-                        BasicBlock* curExistingBB = cpAllBBs.at(existingBBInd);
+                        BasicBlock* curExistingBB = *existingBBIter;
                         for (scc_iterator<Function*> SCCI = scc_begin(top->targetFunc),
                                E = scc_end(top->targetFunc); SCCI != E; ++SCCI)
                         {
@@ -349,17 +350,16 @@ namespace boost{
             //std::vector<BasicBlock*>* allBBs = (top->allBBsInPartition)[this];
             //BBMap2Ins*  srcBBs = (top->srcBBsInPartition)[this];
             //BBMap2Ins*  insBBs = (top->insBBsInPartition)[this];
-            std::vector<BasicBlock*> allRealBBs;
+            std::set<BasicBlock*> allRealBBs;
             for(BBMapIter bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
-                allRealBBs.push_back(curBB);
+                allRealBBs.insert(curBB);
             }
             for(BBMapIter bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
-                if(sourceBBs.find(curBB)==sourceBBs.end()) // if curBB was not in srcBB
-                    allRealBBs.push_back(curBB);
+                allRealBBs.insert(curBB);
 
                 // now if this is generating a result based on incoming edges
                 // then the basic block incoming edge should be counted as real
@@ -368,7 +368,7 @@ namespace boost{
                 addPhiOwner2Vector(curBBInsns, allRealBBs);
 
             }
-            std::vector<BasicBlock*> toRemove = AllBBs;
+            std::set<BasicBlock*> toRemove = AllBBs;
             // queue for blocks to keep
             std::vector<BasicBlock*> toKeep;
             std::vector<BasicBlock*> allKeepers;
@@ -420,25 +420,24 @@ namespace boost{
                     this->partitionBranchRemap[brSuccessor] = curBranchKeeper.at(0);
                 }
                 // now remove this keeper from toRemove
-                std::vector<BasicBlock*>::iterator rmKeeperIter = std::find(toRemove.begin(),toRemove.end(),curKeeper);
-                assert(rmKeeperIter!=toRemove.end() && "cannot remove keeper from removal list -- it is absent\
+                assert(toRemove.erase(curKeeper) && "cannot remove keeper from removal list -- it is absent\
                                                        in the first place");
-                toRemove.erase(rmKeeperIter);
             }
             // now actually remove it
-            for(unsigned int trind = 0; trind < toRemove.size(); trind++)
+            for(auto bb2RemoveIter = toRemove.begin(); bb2RemoveIter!= toRemove.end(); bb2RemoveIter++)
             {
-                BasicBlock* bb2Remove = toRemove.at(trind);
-                std::vector<BasicBlock*>::iterator found = std::find(AllBBs.begin(),AllBBs.end(),bb2Remove);
+                BasicBlock* bb2Remove = *bb2RemoveIter;
+                //std::vector<BasicBlock*>::iterator found = std::find(AllBBs.begin(),AllBBs.end(),bb2Remove);
                 //errs()<<(*found)->getName()<<" removed " <<"\n";
-                AllBBs.erase(found);
+                AllBBs.erase(bb2Remove);
             }
             // we shall build a map of basicblocks who now only have
             // one successor -- meaning they do not need to get remote branchtag
             // traverse every block, check their destination (with remap)
-            for(unsigned int allBBInd=0; allBBInd<AllBBs.size(); allBBInd++)
+            //for(unsigned int allBBInd=0; allBBInd<AllBBs.size(); allBBInd++)
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
             {
-                BasicBlock* curBB = AllBBs.at(allBBInd);
+                BasicBlock* curBB = *bbIter;
                 TerminatorInst* curTermInst = curBB->getTerminator();
                 if(!isa<ReturnInst>(*curTermInst))
                 {
@@ -460,37 +459,35 @@ namespace boost{
 
                     }
                     if(sameDestDu2Remap)
-                        singleSucBBs.push_back(curBB);
+                        singleSucBBs.insert(curBB);
                 }
             }
         }
 
-        void moveDominatorToHead()
+        void checkDominator()
         {
-            BasicBlock* domBB = AllBBs.at(0);
+
             DominatorTree* DT= &(top->getAnalysisIfAvailable<DominatorTreeWrapperPass>()->getDomTree());
-            for(unsigned int bbInd = 1; bbInd < AllBBs.size(); bbInd++)
-            {
-                domBB = DT->findNearestCommonDominator(domBB,AllBBs.at(bbInd));
-            }
-            // the dominator must be inside the list
-            std::vector<BasicBlock*>::iterator domIter = std::find(AllBBs.begin(),AllBBs.end(),domBB);
-            assert(domIter!=AllBBs.end());
-            assert(domBB == dominator);
-            AllBBs.erase(domIter);
-            AllBBs.insert(AllBBs.begin(),dominator);
+            BasicBlock* domBB = *(AllBBs.begin());
+            //for(unsigned int bbInd = 1; bbInd < AllBBs.size(); bbInd++)
+            for(auto bbIter = AllBBs.begin(); bbIter!=AllBBs.end(); bbIter++)
+                domBB = DT->findNearestCommonDominator(domBB,*bbIter);
+
+            assert(AllBBs.count(domBB) && "dominator check failed: dominator not in the bb list");
+            assert(domBB == dominator && "dominator check failed: original dominator does not match regenerated dominator");
+
         }
         bool allExitOutsideLoop()
         {
             LoopInfo* li = top->getAnalysisIfAvailable<LoopInfo>();
-            for(unsigned int bbInd = 1; bbInd < AllBBs.size(); bbInd++)
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
             {
-                BasicBlock* curBB = AllBBs.at(bbInd);
+                BasicBlock* curBB = *bbIter;
                 TerminatorInst* curTerm = curBB->getTerminator();
                 for(unsigned sucInd = 0; sucInd < curTerm->getNumSuccessors(); sucInd++)
                 {
                     BasicBlock* curSuc = curTerm->getSuccessor(sucInd);
-                    if(std::find(AllBBs.begin(),AllBBs.end(),curSuc) == AllBBs.end())
+                    if(!AllBBs.count(curSuc))
                     {
                         if(li->getLoopDepth(curSuc)!=0)
                             return false;
@@ -515,7 +512,7 @@ namespace boost{
 
         bool needBranchTag(BasicBlock* curBB)
         {
-            return (std::find(singleSucBBs.begin(),singleSucBBs.end(),curBB)==singleSucBBs.end());
+            return !singleSucBBs.count(curBB);
         }
         bool hasActualInstruction(Instruction* target)
         {
@@ -540,8 +537,7 @@ namespace boost{
                     DAGPartition* destPart = top->collectedPartition.at(sid);
                     if(this != destPart && !destPart->hasActualInstruction(insPt))
                     {
-                        if(std::find(destPart->AllBBs.begin(),destPart->AllBBs.end(),insPt->getParent())!=destPart->AllBBs.end()
-                                &&destPart->needBranchTag(insPt->getParent()))
+                        if(destPart->AllBBs.count(insPt->getParent()) && destPart->needBranchTag(insPt->getParent()))
                             return true;
                     }
                 }
@@ -564,7 +560,6 @@ namespace boost{
                 }
             }
             return false;
-
         }
 
         void collectPartitionFuncArgPerBB(std::set<Value*>& topFuncArg,
@@ -632,9 +627,9 @@ namespace boost{
                                            std::set<Instruction*>& srcInstruction,
                                            std::set<Instruction*>& instToSend)
         {
-            for(unsigned int bbInd = 0; bbInd < AllBBs.size(); bbInd++)
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
             {
-                BasicBlock* curBB = AllBBs.at(bbInd);
+                BasicBlock* curBB = *bbIter;
                 collectPartitionFuncArgPerBB(topFuncArg,srcInstruction,instToSend,curBB);
             }
         }
@@ -652,7 +647,7 @@ namespace boost{
             generateBBList();
             trimBBList();
             /**** some check to run to ensure the cfg is properly formed***/
-            moveDominatorToHead();
+            checkDominator();
             if (top->controlFlowDuplication)
             {
                 assert(allExitOutsideLoop() && "some basic blocks fan out to non-included basic blocks \
