@@ -194,13 +194,12 @@ static void addPathToSelf(BasicBlock* curBB,std::set<BasicBlock*>& AllBBs, Basic
 
 static void searchToFindKeeper(BasicBlock* curSeed, BasicBlock* curPred, BB2BBVectorMapTy* predMap,
                                std::vector<BasicBlock*>& toKeep, std::vector<BasicBlock*>& allKeepers,
-                               std::vector<BasicBlock*>& seenBBs, PostDominatorTree* PDT, std::set<BasicBlock*>& allBBs )
+                               std::set<BasicBlock*>& seenBBs, PostDominatorTree* PDT, std::set<BasicBlock*>& allBBs )
 {
-    if(std::find(seenBBs.begin(), seenBBs.end(),curPred)!=seenBBs.end())
-    {
-        //already seen
+    //if(std::find(seenBBs.begin(), seenBBs.end(),curPred)!=seenBBs.end())
+    if(seenBBs.count(curPred))
         return;
-    }
+
     // if not even in the partition, we dont care
     if(!allBBs.count(curPred))
         return;
@@ -221,7 +220,7 @@ static void searchToFindKeeper(BasicBlock* curSeed, BasicBlock* curPred, BB2BBVe
     else
     {
         // not a keeper, we continue
-        seenBBs.push_back(curPred);
+        seenBBs.insert(curPred);
         if(predMap->find(curPred)!=predMap->end())
         {
             std::vector<BasicBlock*>* nextPreds = (*predMap)[curPred];

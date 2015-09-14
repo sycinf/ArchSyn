@@ -92,9 +92,13 @@ namespace boost{
                 curInsNIter++)
             {
                 Instruction* curIns = (*curInsNIter)->getInstruction();
-                DIS_MSG<<"\t"<<*curIns<<"\n";
+                //DIS_MSG<<"\t"<<*curIns<<"\n";
+                errs()<<*curIns<<"\n";
             }
+
         }
+
+
     };
 
     struct DAGPartition
@@ -147,7 +151,7 @@ namespace boost{
             {
                 DAGNode* curNode = partitionContent.at(nodeI);
                 curNode->print();
-                DIS_MSG<<"\n";
+
             }
         }
         void addDagNode(DAGNode* dagNode,DagNode2PartitionMap &nodeToPartitionMap )
@@ -382,14 +386,14 @@ namespace boost{
                 allKeepers.push_back(curSeed);
                 // search backwards from curSeed, until there is a keeper
                 // all everything is seen
-                std::vector<BasicBlock*> seenBBs;
-                seenBBs.push_back(curSeed);
+                std::set<BasicBlock*> seenBBs;
+                seenBBs.insert(curSeed);
                 if(predMap->find(curSeed)!=predMap->end())
                 {
                     std::vector<BasicBlock*>* curPreds = (*predMap)[curSeed];
-                    for(unsigned int cPred = 0; cPred < curPreds->size(); cPred++)
+                    for(auto predIter = curPreds->begin(); predIter!= curPreds->end(); predIter++)
                     {
-                        BasicBlock* curPred = curPreds->at(cPred);
+                        BasicBlock* curPred = *predIter;
                         searchToFindKeeper(curSeed, curPred,predMap, toKeep, allKeepers, seenBBs,PDT, AllBBs );
                     }
                 }
@@ -543,7 +547,7 @@ namespace boost{
             }
             else
             {
-                for(Value::use_iterator curUser = insPt->use_begin(), endUser = insPt->use_end(); curUser != endUser; ++curUser )
+                for(Value::user_iterator curUser = insPt->user_begin(), endUser = insPt->user_end(); curUser != endUser; ++curUser )
                 {
                     assert(isa<Instruction>(*curUser));
                     // now multiple guy can use this value
@@ -660,7 +664,13 @@ namespace boost{
             collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart);
             Function* addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart);
             // now we iterate through the basic block list and generate the basic blocks
-
+            errs()<<"partition:\n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
+            {
+                BasicBlock* curBB = *bbIter;
+                errs()<<curBB->getName()<<"\n";
+            }
+            errs()<<"\n====================";
 
             // got to collect the argument types
 //SHAOYI: this is the new part
@@ -831,7 +841,6 @@ namespace boost{
     }
     bool DecoupleInsScc::DFSFindPartitionCycle(DAGPartition* dp)
     {
-
         if(dp->cycleDetectCovered)
             return true;
         dp->cycleDetectCovered = true;
@@ -853,6 +862,7 @@ namespace boost{
                 DAGPartition* nextHop = nextHopPartitions->front();
                 if(nextHop==dp)
                     continue;
+
                 if(DFSFindPartitionCycle(nextHop))
                     return true;
             }
@@ -997,6 +1007,8 @@ namespace boost{
         for(unsigned int dnInd =0; dnInd < collectedDagNode.size(); dnInd++)
         {
             DAGNode* curNode = collectedDagNode.at(dnInd);
+            curNode->print();
+            errs()<<"\n============\n";
             totalNumOfIns+= curNode->dagNodeContent.size();
             std::vector<DAGNode*> myDep;
             findDependentNodes(curNode,this->dagNodeMap,myDep);
