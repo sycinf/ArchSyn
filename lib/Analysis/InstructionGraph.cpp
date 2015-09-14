@@ -72,43 +72,43 @@ InstructionGraph::InstructionGraph()
 }
 
 void InstructionGraph::addToInstructionGraph(Instruction *I, std::vector<BasicBlock*>* earliestPred) {
-  InstructionGraphNode *Node = getOrInsertInstruction(I);
+    InstructionGraphNode *Node = getOrInsertInstruction(I);
+    // If this function has external linkage, anything could call it.
+    //if (!F->hasLocalLinkage()) {
+    //  ExternalCallingNode->addCalledFunction(CallSite(), Node);
 
-  // If this function has external linkage, anything could call it.
-  //if (!F->hasLocalLinkage()) {
-  //  ExternalCallingNode->addCalledFunction(CallSite(), Node);
-
-  // for all the instructions, we have the external instruction as
-  // the ancestor
-  ExternalInsNode->addDependentInstruction(Node);
-
+    // for all the instructions, we have the external instruction as
+    // the ancestor
+    ExternalInsNode->addDependentInstruction(Node);
 
 
-  // Look for dependent instruction
-  for(Value::use_iterator curUser = I->use_begin(), endUser = I->use_end(); curUser != endUser; ++curUser )
-  {
-      if(!isa<Instruction>(*curUser))
-      {
-          errs()<<"instruction used by non instruction\n";
-          exit(1);
-      }
-      else
-      {
 
-           Node->addDependentInstruction(getOrInsertInstruction( cast<Instruction>(*curUser)));
-      }
+    // Look for dependent instruction
+    for(Value::user_iterator curUser = I->user_begin(), endUser = I->user_end(); curUser != endUser; ++curUser )
+    {
+        if(!isa<Instruction>(*curUser))
+        {
+            errs()<<"instruction used by non instruction\n";
+            exit(1);
+        }
+        else
+        {
+
+            Node->addDependentInstruction(getOrInsertInstruction( cast<Instruction>(*curUser)));
+
+        }
       //Node->addDependentInstruction(getOrInsertInstruction(curIns));
-  }
-  if(earliestPred!=0)
-  {
-      for(unsigned int predInd = 0; predInd < earliestPred->size(); predInd++ )
-      {
-          BasicBlock* predBB = earliestPred->at(predInd);
-          TerminatorInst* predBBTermInst = predBB->getTerminator();
-          InstructionGraphNode* predBBTermNode = getOrInsertInstruction(predBBTermInst);
-          predBBTermNode->addDependentInstruction(Node);
-      }
-  }
+    }
+    if(earliestPred!=0)
+    {
+        for(unsigned int predInd = 0; predInd < earliestPred->size(); predInd++ )
+        {
+            BasicBlock* predBB = earliestPred->at(predInd);
+            TerminatorInst* predBBTermInst = predBB->getTerminator();
+            InstructionGraphNode* predBBTermNode = getOrInsertInstruction(predBBTermInst);
+            predBBTermNode->addDependentInstruction(Node);
+        }
+    }
 
 
 /*
@@ -133,15 +133,15 @@ void InstructionGraph::addToInstructionGraph(Instruction *I, std::vector<BasicBl
 */
 
 
-  // we need to look at other kinda dependence --- memory?
-  if(I->mayReadFromMemory())
-  {
+    // we need to look at other kinda dependence --- memory?
+    if(I->mayReadFromMemory())
+    {
     //look at all other instructions who read the same memory segment
-  }
-  if(I->mayWriteToMemory())
-  {
+    }
+    if(I->mayWriteToMemory())
+    {
 
-  }
+    }
 
 }
 
@@ -163,52 +163,51 @@ bool InstructionGraph::runOnFunction(Function &M) {
     //CallsExternalNode = new CallGraphNode(0);
     Root = ExternalInsNode;
     for(Function::iterator BB=M.begin(), BBE = M.end(); BB != BBE; ++BB)
-{
-    TerminatorInst* curBBTerm =  BB->getTerminator();
-    unsigned numSuc = curBBTerm->getNumSuccessors();
-    for(unsigned sucInd=0; sucInd < numSuc; sucInd++)
     {
-        BasicBlock* curSuc = curBBTerm->getSuccessor(sucInd);
-        std::vector<BasicBlock*>* curSucPredecessors;
-        if(BasicBlock2Predecessors.find(curSuc)==BasicBlock2Predecessors.end())
+        TerminatorInst* curBBTerm =  BB->getTerminator();
+        unsigned numSuc = curBBTerm->getNumSuccessors();
+        for(unsigned sucInd=0; sucInd < numSuc; sucInd++)
         {
-            curSucPredecessors = new std::vector<BasicBlock*>();
-            BasicBlock2Predecessors[curSuc] = curSucPredecessors;
+            BasicBlock* curSuc = curBBTerm->getSuccessor(sucInd);
+            std::vector<BasicBlock*>* curSucPredecessors;
+            if(BasicBlock2Predecessors.find(curSuc)==BasicBlock2Predecessors.end())
+            {
+                curSucPredecessors = new std::vector<BasicBlock*>();
+                BasicBlock2Predecessors[curSuc] = curSucPredecessors;
+            }
+            else
+                curSucPredecessors = BasicBlock2Predecessors[curSuc];
+            curSucPredecessors->push_back(&(*BB));
         }
-        else
-            curSucPredecessors = BasicBlock2Predecessors[curSuc];
-        curSucPredecessors->push_back(&(*BB));
     }
-}
     PostDominatorTree* PDT = getAnalysisIfAvailable<PostDominatorTree>();
     LoopInfo* LI = getAnalysisIfAvailable<LoopInfo>();
     for (Function::iterator BB = M.begin(), BBE = M.end(); BB != BBE; ++BB)
-{
-  BasicBlock* curBBPtr = &(*BB);
-  std::vector<BasicBlock*>* earliestPred=0;
-  if(BasicBlock2Predecessors.find(curBBPtr)==BasicBlock2Predecessors.end())
-  {
-      assert (&(M.getEntryBlock()) == curBBPtr);
+    {
+        BasicBlock* curBBPtr = &(*BB);
+        std::vector<BasicBlock*>* earliestPred=0;
+        if(BasicBlock2Predecessors.find(curBBPtr)==BasicBlock2Predecessors.end())
+        {
+            assert (&(M.getEntryBlock()) == curBBPtr);
+        }
+        else
+        {
+          // now we shall search for the actual predicate instruction
+            earliestPred = searchEarliestPredicate(curBBPtr, PDT, BasicBlock2Predecessors,LI);
+        }
+        /*errs()<<"bb:"<<BB->getName() << " has "<<" pred \n";
+        for(unsigned k = 0;k < earliestPred->size(); k++)
+        {
+          errs()<< earliestPred->at(k)->getName()<<"\n";
+        }*/
 
-  }
-  else
-  {
-      // now we shall search for the actual predicate instruction
-      earliestPred = searchEarliestPredicate(curBBPtr, PDT, BasicBlock2Predecessors,LI);
-  }
-  /*errs()<<"bb:"<<BB->getName() << " has "<<" pred \n";
-  for(unsigned k = 0;k < earliestPred->size(); k++)
-  {
-      errs()<< earliestPred->at(k)->getName()<<"\n";
-  }*/
-
-  for(BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI)
-  {
-       addToInstructionGraph(BI, earliestPred);
-  }
-  delete earliestPred;
-  errs()<<BB->getName()<<"\t" <<ExternalInsNode->DependentInstructions.size()<<" root dep\n";
-}
+        for(BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI)
+        {
+           addToInstructionGraph(BI, earliestPred);
+        }
+        delete earliestPred;
+        errs()<<BB->getName()<<"\t" <<ExternalInsNode->DependentInstructions.size()<<" root dep\n";
+    }
     // we should have all the node
     errs()<<InstructionMap.size()<< " instructions added as graph nodes\n";
 
@@ -265,7 +264,7 @@ void InstructionGraphNode::print(raw_ostream &OS) const {
   OS << "<<" << this << ">>  #uses=" << DependentInstructions.size() << '\n';
 
   for (const_iterator I = begin(), E = end(); I != E; ++I) {
-      OS << "  <" << I->second->getInstruction() << "> \n ";
+      OS << "  <" << *(I->second->getInstruction()) << "> \n ";
   }
   OS << '\n';
 }
