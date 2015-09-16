@@ -9,6 +9,8 @@ using namespace llvm;
 #define DEBUG_TYPE "decoupleInsSCC"
 namespace llvm{
     FunctionPass* createDecoupleInsSccPass(bool cfDup);
+
+
 }
 
 

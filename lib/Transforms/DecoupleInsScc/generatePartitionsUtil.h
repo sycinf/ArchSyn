@@ -9,15 +9,50 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/PostDominators.h"
+#include "generatePartitions.h"
 
 using namespace llvm;
-struct DAGNode;
-struct DAGPartition;
+using namespace partGen;
 
+static int getInstructionSeqNum(Instruction* ins)
+{
+    BasicBlock* BB=ins->getParent();
+    int seqNum = -1;
+    for(BasicBlock::iterator insPt = BB->begin(), insEnd = BB->end(); insPt != insEnd; insPt++)
+    {
+        seqNum++;
+        if( ins == insPt)
+            break;
+    }
+    return seqNum;
+}
+static void addArgTypeList(std::set<Instruction*>& vals2Send, std::vector<Type*>& paramTypes,
+                           LLVMContext& context,std::vector<Value*>& originalVal )
+{
+    for(auto valIter = vals2Send.begin(); valIter!= vals2Send.end(); valIter++ )
+    {
+        Instruction* curIns = *valIter;
+        PointerType* fifoInfType = 0;
+        if(isa<TerminatorInst>(*curIns))
+        {
+            assert(!isa<ReturnInst>(*curIns) && "receiving from return inst!");
+            // check how many successors are there and generate integer Type
+            TerminatorInst* remoteTermInst = &(cast<TerminatorInst>(*curIns));
+            int numSuccessor = remoteTermInst->getNumSuccessors();
+            // assuming we dont have overflow problem
+            int numBitNeeded = (int)ceil(log2(numSuccessor));
+            fifoInfType = Type::getIntNPtrTy(context,numBitNeeded);
 
-typedef std::map<DAGNode*, std::vector<DAGPartition*>*> DagNode2PartitionMap;
-typedef std::map<BasicBlock*, std::set<Instruction*>*> BBMap2Ins;
-typedef BBMap2Ins::iterator BBMapIter;
+        }
+        else
+        {
+            Type* curSrcInsTy = curIns->getType();
+            fifoInfType = curSrcInsTy->getPointerTo();
+        }
+        originalVal.push_back(curIns);
+        paramTypes.push_back(fifoInfType);
+    }
+}
 
 static BasicBlock* findDominator(BasicBlock* originalDominator,std::set<BasicBlock*>& allBBs, DominatorTree* DT)
 {

@@ -1,0 +1,10 @@
+#ifndef GENEREATENEWINSTRUCTIONS_H
+#define GENEREATENEWINSTRUCTIONS_H
+
+struct InstructionGenerator
+{
+
+};
+
+
+#endif // GENEREATENEWINSTRUCTIONS_H

@@ -156,6 +156,12 @@ void InstructionGraph::getAnalysisUsage(AnalysisUsage &AU) const {
 
 
 bool InstructionGraph::runOnFunction(Function &M) {
+    errs()<<"ins grph ";
+
+    // if the function dppcreated, then we skip
+    if(M.hasFnAttribute("dppcreated"))
+        return false;
+    errs()<<"skip check";
     Func = &M;
 
     ExternalInsNode = getOrInsertInstruction(0);

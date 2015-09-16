@@ -14,22 +14,22 @@
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
 #include "llvm/Analysis/InstructionGraph.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "generatePartitionsUtil.h"
+#include "generatePartitions.h"
+#include "generateNewFunctions.h"
 #include <boost/lexical_cast.hpp>
-
+#include <math.h>
 #include <algorithm>
 using namespace llvm;
-
-#define LONGLATTHRESHOLD 5
-#define DEBUG_TYPE "decoupleInsSCC"
-#define DIS_MSG errs()<<"Decoupling Pass Message: "
 
 namespace boost{
     void throw_exception(std::exception const & e)
@@ -39,44 +39,9 @@ namespace boost{
     }
 }
 
+namespace partGen {
 
-    struct DAGNode;
-    struct DAGPartition;
-
-    struct DecoupleInsScc : public FunctionPass {
-        static char ID; // Pass identification, replacement for typeid
-        Function* targetFunc;
-        bool controlFlowDuplication;
-        std::vector<DAGNode*> collectedDagNode;
-        std::vector<DAGPartition*> collectedPartition;
-        std::map<const Instruction *, DAGNode *> dagNodeMap;
-        DagNode2PartitionMap dagPartitionMap;
-        DecoupleInsScc() : FunctionPass(ID) {
-        }
-        void setControlFlowDuplication(bool cfDup);
-        bool generatePartition();
-        bool runOnFunction(Function &F) override;
-        void checkAcyclicDependency();
-        bool DFSFindPartitionCycle(DAGPartition* dp);
-        virtual void getAnalysisUsage(AnalysisUsage &AU) const;
-        std::vector<DAGPartition*>* getPartitionFromIns(Instruction* ins)
-        {
-            DAGNode* node = dagNodeMap[const_cast<Instruction*>(ins)];
-            std::vector<DAGPartition*>* part = dagPartitionMap[const_cast<DAGNode*>(node)];
-            return part;
-        }
-    };
-
-    struct DAGNode
-    {
-        std::vector<InstructionGraphNode*> dagNodeContent;
-        bool singleIns;
-        int sccLat;
-        bool hasMemory;
-        bool expensive;
-        bool covered;
-        int seqNum;
-        void init()
+        void DAGNode::init()
         {
             singleIns = false;
             sccLat = 0;
@@ -85,7 +50,7 @@ namespace boost{
             covered = false;
             seqNum = -1;
         }
-        void print()
+        void DAGNode::print()
         {
             for(std::vector<InstructionGraphNode*>::iterator curInsNIter = dagNodeContent.begin();
                 curInsNIter != dagNodeContent.end();
@@ -97,46 +62,7 @@ namespace boost{
             }
 
         }
-
-
-    };
-
-    struct DAGPartition
-    {
-
-        std::vector<DAGNode*> partitionContent;
-
-        bool cycleDetectCovered;
-
-        /*******************properties of this particular partition **************/
-        bool containMemory;
-        bool containLongLatCyc;
-        struct DecoupleInsScc* top;
-
-
-        /******************data structure facilitating transformations ***********/
-        // return instruction if it is here, 0 if it is not
-        Instruction* rInsn;
-        // since the partition only contains a subset of basic blocks
-        // we can potentially skip basic blocks:
-        // e.g. in the original cfg: A->B->C, and only A and C are in
-        // in partition, we have a map which maps B to C
-        std::map<BasicBlock*,BasicBlock*> partitionBranchRemap;
-        std::set<BasicBlock*> singleSucBBs;
-        // the dominator for all basicblocks in this partition
-        // the entry block for this partition will be here
-        BasicBlock* dominator;
-        // BBs containing the source of the instructions assigned
-        // to this partition
-        BBMap2Ins sourceBBs;
-        // BBs containing the actual instruction assigned to this
-        // this partition
-        BBMap2Ins insBBs;
-        // all relevant BBs, including insBB and sourceBB and
-        // all the necessary BBs for control flow purpose
-        std::set<BasicBlock*> AllBBs;
-
-        void init(struct DecoupleInsScc* tt )
+        void DAGPartition::init(struct DecoupleInsScc* tt )
         {
             containMemory = false;
             containLongLatCyc = false;
@@ -145,7 +71,7 @@ namespace boost{
             rInsn= NULL;
             dominator=0;
         }
-        void print()
+        void DAGPartition::print()
         {
             for(unsigned int nodeI = 0; nodeI < partitionContent.size(); nodeI++)
             {
@@ -154,7 +80,7 @@ namespace boost{
 
             }
         }
-        void addDagNode(DAGNode* dagNode,DagNode2PartitionMap &nodeToPartitionMap )
+        void DAGPartition::addDagNode(DAGNode* dagNode,DagNode2PartitionMap &nodeToPartitionMap )
         {
             partitionContent.push_back(dagNode);
             dagNode->covered=true;
@@ -174,7 +100,7 @@ namespace boost{
                 listOfDp = nodeToPartitionMap[dagNode];
             listOfDp->push_back(this);
         }
-        void generateBBList()
+        void DAGPartition::generateBBList()
         {
             // at this point instructions are associated with the partition
             // each of these instructions' owner bb is of course relevant to
@@ -329,7 +255,7 @@ namespace boost{
         }
         //FIXME: all the graph search like things should be ported to LLVM graph traits
         // libs
-        void trimBBList()
+        void DAGPartition::trimBBList()
         {
             BB2BBVectorMapTy* predMap = top->getAnalysis<InstructionGraph>().getPredecessorMap();
             PostDominatorTree* PDT = top->getAnalysisIfAvailable<PostDominatorTree>();
@@ -468,7 +394,7 @@ namespace boost{
             }
         }
 
-        void checkDominator()
+        void DAGPartition::checkDominator()
         {
 
             DominatorTree* DT= &(top->getAnalysisIfAvailable<DominatorTreeWrapperPass>()->getDomTree());
@@ -481,7 +407,7 @@ namespace boost{
             assert(domBB == dominator && "dominator check failed: original dominator does not match regenerated dominator");
 
         }
-        bool allExitOutsideLoop()
+        bool DAGPartition::allExitOutsideLoop()
         {
             LoopInfo* li = top->getAnalysisIfAvailable<LoopInfo>();
             for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
@@ -491,33 +417,36 @@ namespace boost{
                 for(unsigned sucInd = 0; sucInd < curTerm->getNumSuccessors(); sucInd++)
                 {
                     BasicBlock* curSuc = curTerm->getSuccessor(sucInd);
-                    if(!AllBBs.count(curSuc))
+                    BasicBlock* actualDst=curSuc;
+                    if(this->partitionBranchRemap.find(curSuc)!=this->partitionBranchRemap.end())
+                        actualDst = partitionBranchRemap[curSuc];
+
+                    if(!AllBBs.count(actualDst))
                     {
-                        if(li->getLoopDepth(curSuc)!=0)
+                        if(li->getLoopDepth(actualDst)!=0)
                             return false;
+
                     }
                 }
             }
             return true;
         }
-        bool isFlowOnlyBB(BasicBlock* curBB)
+        bool DAGPartition::isFlowOnlyBB(BasicBlock* curBB)
         {
             return (sourceBBs.find(curBB)==sourceBBs.end() && insBBs.find(curBB)==insBBs.end());
         }
-        bool terminatorNotLocal(BasicBlock* curBB)
+        bool DAGPartition::terminatorNotLocal(BasicBlock* curBB)
         {
             std::set<Instruction*>* actualIns = 0;
             if(insBBs.find(curBB)!=insBBs.end())
                 actualIns = insBBs[curBB];
             return (actualIns==0 || !(actualIns->count(curBB->getTerminator())));
         }
-
-
-        bool needBranchTag(BasicBlock* curBB)
+        bool DAGPartition::needBranchTag(BasicBlock* curBB)
         {
             return !singleSucBBs.count(curBB);
         }
-        bool hasActualInstruction(Instruction* target)
+        bool DAGPartition::hasActualInstruction(Instruction* target)
         {
             bool haveIns = false;
             BasicBlock* curBB = target->getParent();
@@ -528,7 +457,7 @@ namespace boost{
             }
             return haveIns;
         }
-        bool receiverPartitionsExist(Instruction* insPt)
+        bool DAGPartition::receiverPartitionsExist(Instruction* insPt)
         {
             if(insPt->isTerminator()&& !isa<ReturnInst>(*insPt))
             {
@@ -564,86 +493,7 @@ namespace boost{
             }
             return false;
         }
-
-        void collectPartitionFuncArgPerBB(std::set<Value*>& topFuncArg,
-                                          std::set<Instruction*>& srcInstruction,
-                                          std::set<Instruction*>& instToSend,
-                                          BasicBlock* curBB)
-        {
-            if( terminatorNotLocal(curBB) && needBranchTag(curBB)
-                    && !isa<ReturnInst>(*(curBB->getTerminator())))
-                srcInstruction.insert(curBB->getTerminator());
-            // if this is flow only, nothing to do anymore
-            if(isFlowOnlyBB(curBB))
-                return;
-            // now look at the actual content blocks
-            std::set<Instruction*>* srcIns = 0;
-            std::set<Instruction*>* actualIns = 0;
-            if(sourceBBs.find(curBB)!=sourceBBs.end())
-                srcIns = sourceBBs[curBB];
-            if(insBBs.find(curBB)!=insBBs.end())
-                actualIns = insBBs[curBB];
-            // we look at each instruction, if the instruction is src Ins
-            // but not in the actualIns we just add it to the srcInstruction set,
-            // if it is an actual
-            // instruction, we check to see if it is reading anything from
-            // argument list of function, if it does, we add tat to the topFuncArg
-            // also if it is an actual and the real owner is this partition, we
-            // add the instruction to instToSend
-            for(BasicBlock::iterator insPt = curBB->begin(), insEnd = curBB->end();
-                insPt != insEnd; insPt++)
-            {
-                if(srcIns!=0 && srcIns->count(insPt))
-                    if(actualIns==0 || (actualIns!=0 && !actualIns->count(insPt)))
-                    {
-                        Instruction* curInsPtr = insPt;
-                        srcInstruction.insert(curInsPtr);
-                    }
-                if(actualIns!=0 &&  actualIns->count(insPt))
-                {
-                    bool iAmSender = true;
-                    std::vector<DAGPartition*>* allOwners=top->getPartitionFromIns(insPt);
-                    DAGPartition* realOwner = allOwners->at(0);
-                    if(realOwner!=this)
-                        iAmSender = false;
-                    // we check the first member of the dag 2 partition map
-                    // if it is not me, then I aint sender
-
-                    if(iAmSender)
-                    {
-                        if(receiverPartitionsExist(insPt))
-                            instToSend.insert(insPt);
-                    }
-                    // if we are using function argument, we need to add that too
-                    // iterate through insPt's operand
-                    for(unsigned int opInd = 0; opInd < insPt->getNumOperands(); opInd++)
-                    {
-                        Value* curOp = insPt->getOperand(opInd);
-                        if(isa<Argument>(*curOp))
-                            topFuncArg.insert(curOp);
-                    }
-                }
-            }
-        }
-
-        void collectPartitionFuncArguments(std::set<Value*>& topFuncArg,
-                                           std::set<Instruction*>& srcInstruction,
-                                           std::set<Instruction*>& instToSend)
-        {
-            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
-            {
-                BasicBlock* curBB = *bbIter;
-                collectPartitionFuncArgPerBB(topFuncArg,srcInstruction,instToSend,curBB);
-            }
-        }
-        Function* addFunctionSignature(std::set<Value*>& topFuncArg,
-                                       std::set<Instruction*>& srcInstruction,
-                                       std::set<Instruction*>& instToSend)
-        {
-            return 0;
-        }
-
-        void generateDecoupledFunction(int seqNum)
+        void DAGPartition::generateDecoupledFunction(int seqNum)
         {
             // we collect all the basic blocks
             // and remove what ever redundant BasicBlocks
@@ -651,27 +501,46 @@ namespace boost{
             trimBBList();
             /**** some check to run to ensure the cfg is properly formed***/
             checkDominator();
+//=========================
+/*
+            errs()<<"partition "<<seqNum<<" going to genFunction\n";
+            for(auto bbIter = AllBBs.begin(); bbIter!=AllBBs.end(); bbIter++)
+                errs()<<(*bbIter)->getName()<<"\n";
+            errs()<<"actual ins bb:\n";
+            for(auto actualInsIter = insBBs.begin(); actualInsIter!=insBBs.end(); actualInsIter++)
+                errs()<<actualInsIter->first->getName()<<"\n";*/
+//===========================
             if (top->controlFlowDuplication)
-            {
                 assert(allExitOutsideLoop() && "some basic blocks fan out to non-included basic blocks \
                                                inside a loop, shouldn't happen when control flow is \
                                                 is duplicated\n");
-            }
+
             /**** end of check ************/
-            std::set<Value*> topFuncArg;
+            struct DppFunctionGenerator dpg(this);
+            dpg.generateFunction(seqNum);
+
+            /*std::set<Value*> topFuncArg;
             std::set<Instruction*> srcInstFromOtherPart;
             std::set<Instruction*> instToOtherPart;
-            collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart);
-            Function* addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart);
-            // now we iterate through the basic block list and generate the basic blocks
-            errs()<<"partition:\n";
+            Instruction* retInstPtr = 0;
+            collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart, retInstPtr);*/
+            // associate the argument of the new function with the instruction coming in and out of
+            // this partition function -- original instruction to index in the argument list
+
+
+            /*std::map<BasicBlock*,BasicBlock*> oldBB2newBBMapping;
+            createNewFunctionBBs(addedFunction,oldBB2newBBMapping);
+            // now we populate the newly created BBs
             for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
             {
                 BasicBlock* curBB = *bbIter;
-                errs()<<curBB->getName()<<"\n";
-            }
-            errs()<<"\n====================";
+                if(isFlowOnlyBB(curBB))
+                {
+                    populateFlowOnlyBB(addedFunction,curBB,originalVal2NewArg,oldBB2newBBMapping);
 
+                }
+            }*/
+            errs()<<"done with partition\n";
             // got to collect the argument types
 //SHAOYI: this is the new part
 /*            Function* topFunction = top->targetFunc;
@@ -687,7 +556,7 @@ namespace boost{
             //BasicBlock& entryBB = top->targetFunc->getEntryBlock();
         }
 
-    };
+
 
 
 
@@ -786,53 +655,7 @@ namespace boost{
         }
     }
 
-    struct PartitionStrategies
-    {
-        DecoupleInsScc* top;
-        void init(DecoupleInsScc* container)
-        {
-            top = container;
-        }
 
-        bool needANewPartition(DAGPartition* curPartition, DAGNode* curNode)
-        {
-            // if the last node we added accesses memory or it was a long latency operation
-            if((curNode->hasMemory  &&  (curPartition->containLongLatCyc || curPartition->containMemory))||
-               ((!curNode->singleIns  && curNode->sccLat >= LONGLATTHRESHOLD)&& (curPartition->containMemory)))
-                return true;
-            else
-                return false;
-        }
-
-        bool barrierPartition(std::vector<DAGPartition*>& partitions)
-        {
-            DIS_MSG<<"Partition Strategy: Simple cut at memory accees node\n";
-            std::vector<DAGNode*>& dag = top->collectedDagNode;
-
-            DAGPartition* curPartition = new DAGPartition;
-            curPartition->init(top);
-            partitions.push_back(curPartition);
-
-            for(unsigned int dagInd = 0; dagInd < dag.size(); dagInd++)
-            {
-                DAGNode* curDagNode = dag.at(dagInd);
-                curPartition->addDagNode(curDagNode ,top->dagPartitionMap);
-                // if this is not the last node and we need a new partition
-                if(dagInd!=dag.size()-1 && needANewPartition(curPartition,curDagNode))
-                {
-                    curPartition = new DAGPartition;
-                    curPartition->init(top);
-                    partitions.push_back(curPartition);
-                }
-
-            }
-            if(partitions.size()>1)
-                return true;
-            else
-                return false;
-        }
-
-    };
 
 
     void DecoupleInsScc::setControlFlowDuplication(bool cfDup)
@@ -918,6 +741,8 @@ namespace boost{
 
     bool DecoupleInsScc::runOnFunction(Function &F)
     {
+        if(F.hasFnAttribute("dppcreated"))
+            return false;
         errs() << "Try to decouple function: ";
         errs().write_escaped(F.getName()) << '\n';
         targetFunc = &F;
@@ -1071,7 +896,13 @@ namespace boost{
         AU.addRequired<LoopInfo>();
         AU.setPreservesAll();
     }
-
+    std::vector<DAGPartition*>* DecoupleInsScc::getPartitionFromIns(Instruction* ins)
+    {
+        DAGNode* node = dagNodeMap[const_cast<Instruction*>(ins)];
+        std::vector<DAGPartition*>* part = dagPartitionMap[const_cast<DAGNode*>(node)];
+        return part;
+    }
+}
 
 char DecoupleInsScc::ID = 0;
 static RegisterPass<DecoupleInsScc> X("decoupleInsScc", "decoupleInsScc Pass");

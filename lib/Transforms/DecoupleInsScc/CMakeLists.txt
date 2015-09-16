@@ -9,4 +9,7 @@ message("boost: ${Boost_INCLUDE_DIRS}")
 add_llvm_library( LLVMDecoupleInsScc
   DecoupleInsScc.cpp
   generatePartitionsUtil.h
+  generateNewInstructions.h
+  generateNewFunctions.h
+  generatePartitions.h
   )
