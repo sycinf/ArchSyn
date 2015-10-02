@@ -12,4 +12,5 @@ add_llvm_library( LLVMDecoupleInsScc
   generateNewInstructions.h
   generateNewFunctions.h
   generatePartitions.h
+  generateNewFunctions.cpp
   )

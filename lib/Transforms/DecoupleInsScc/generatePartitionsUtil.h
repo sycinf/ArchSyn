@@ -26,6 +26,11 @@ static int getInstructionSeqNum(Instruction* ins)
     }
     return seqNum;
 }
+static int integerWidthForSuccessors(int numSuccessor)
+{
+    return (int)ceil(log2(numSuccessor));
+}
+
 static void addArgTypeList(std::set<Instruction*>& vals2Send, std::vector<Type*>& paramTypes,
                            LLVMContext& context,std::vector<Value*>& originalVal )
 {
@@ -40,7 +45,7 @@ static void addArgTypeList(std::set<Instruction*>& vals2Send, std::vector<Type*>
             TerminatorInst* remoteTermInst = &(cast<TerminatorInst>(*curIns));
             int numSuccessor = remoteTermInst->getNumSuccessors();
             // assuming we dont have overflow problem
-            int numBitNeeded = (int)ceil(log2(numSuccessor));
+            int numBitNeeded = integerWidthForSuccessors(numSuccessor);
             fifoInfType = Type::getIntNPtrTy(context,numBitNeeded);
 
         }

@@ -204,7 +204,6 @@ namespace partGen {
                 std::set<Instruction*>* curBBInsns = bmi->second;
                 addPhiOwner2Vector(curBBInsns, AllBBs);
             }
-
             // a special pass to search for every insBB and srcBB themselves
             for(auto bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
             {
@@ -217,6 +216,41 @@ namespace partGen {
                 BasicBlock* curBB=bmi->first;
                 addPathToSelf(curBB,AllBBs,dominator);
             }
+            // make sure everybody's predecessor is either dominator or part of AllBBs
+            // if they are not, add it in, and update the dominator,and add the path in
+            BB2BBVectorMapTy* predMap = top->getAnalysis<InstructionGraph>().getPredecessorMap();
+            std::set<BasicBlock*> added=AllBBs;
+            bool initial = true;
+            while(added.size()!=0)
+            {
+                if(!initial)
+                    AllBBs.insert(added.begin(),added.end());
+                // now set dominators to be common dominator of the added ones and
+                // the original dominator
+                dominator = findDominator(dominator,added,DT);
+
+                initial=false;
+                std::set<BasicBlock*> lastAdded = added;
+                added.clear();
+                for(auto curAddedIter = lastAdded.begin(); curAddedIter!=lastAdded.end(); curAddedIter++)
+                {
+                    BasicBlock* curAddedBB = *curAddedIter;
+                    if(predMap->find(curAddedBB)!=predMap->end())
+                    {
+                        std::vector<BasicBlock*>* curBBPreds = (*predMap)[curAddedBB];
+                        for(auto curPredIter = curBBPreds->begin();curPredIter!=curBBPreds->end();curPredIter++)
+                        {
+                            BasicBlock* curPred = *curPredIter;
+                            if(!AllBBs.count(curPred) && curPred!=dominator)
+                            {
+                                added.insert(curPred);
+                            }
+                        }
+                    }
+                }
+            }
+
+
             LoopInfo* li =top->getAnalysisIfAvailable<LoopInfo>();
             if(top->controlFlowDuplication)
             {
@@ -293,7 +327,7 @@ namespace partGen {
 
                 // now if this is generating a result based on incoming edges
                 // then the basic block incoming edge should be counted as real
-                // and always be preserved.
+                // and always be preserved
                 std::set<Instruction*>* curBBInsns = insBBs[curBB];
                 addPhiOwner2Vector(curBBInsns, allRealBBs);
 
@@ -372,24 +406,29 @@ namespace partGen {
                 if(!isa<ReturnInst>(*curTermInst))
                 {
                     int numSuc = curTermInst->getNumSuccessors();
-                    bool sameDestDu2Remap = true;
-                    BasicBlock* firstDst = curTermInst->getSuccessor(0);
-                    if(partitionBranchRemap.find(firstDst)!=partitionBranchRemap.end())
-                        firstDst = partitionBranchRemap[firstDst];
-                    for(unsigned int i = 1; i<numSuc; i++)
-                    {
-                        BasicBlock* curDst = curTermInst->getSuccessor(i);
-                        if(partitionBranchRemap.find(curDst)!=partitionBranchRemap.end())
-                            curDst = partitionBranchRemap[curDst];
-                        if(curDst!=firstDst)
-                        {
-                            sameDestDu2Remap = false;
-                            break;
-                        }
-
-                    }
-                    if(sameDestDu2Remap)
+                    if(numSuc==1)
                         singleSucBBs.insert(curBB);
+                    else
+                    {
+                        bool sameDestDu2Remap = true;
+                        BasicBlock* firstDst = curTermInst->getSuccessor(0);
+                        if(partitionBranchRemap.find(firstDst)!=partitionBranchRemap.end())
+                            firstDst = partitionBranchRemap[firstDst];
+                        for(unsigned int i = 1; i<numSuc; i++)
+                        {
+                            BasicBlock* curDst = curTermInst->getSuccessor(i);
+                            if(partitionBranchRemap.find(curDst)!=partitionBranchRemap.end())
+                                curDst = partitionBranchRemap[curDst];
+                            if(curDst!=firstDst)
+                            {
+                                sameDestDu2Remap = false;
+                                break;
+                            }
+
+                        }
+                        if(sameDestDu2Remap)
+                            singleSucBBs.insert(curBB);
+                    }
                 }
             }
         }
