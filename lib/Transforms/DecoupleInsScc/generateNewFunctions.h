@@ -34,6 +34,9 @@ namespace partGen{
 
         std::map<Constant*,Constant*> originalConst2NewConst;
 
+        // for PhiNode, we keep generating operand till we hit another
+        // phiNode
+
         DppFunctionGenerator(DAGPartition* myPart)
         {
             part = myPart;
@@ -43,7 +46,10 @@ namespace partGen{
                                        std::set<Instruction*>& srcInstruction,
                                        std::set<Instruction*>& instToSend,
                                        Instruction* retInstPtr,
-                                       int seqNum);
+                                       int seqNum,
+                                       std::map<Instruction*,Value*>& ins2AllocatedChannel,
+                                       std::vector<Value*>* argList
+                                       );
 
         void collectPartitionFuncArgPerBB(std::set<Value*>& topFuncArg,
                                           std::set<Instruction*>& srcInstruction,
@@ -63,7 +69,9 @@ namespace partGen{
         void populateContentBBActualIns(BasicBlock* curBB);
         void generateActualInstruction(Instruction* originalIns);
 
-        Function* generateFunction(int seqNum);
+        Function* generateFunction(int seqNum,
+                                   std::map<Instruction*,Value*>& ins2AllocatedChannel,
+                                   std::vector<Value*>* argList);
 
     };
 }

@@ -1,5 +1,5 @@
-#ifndef GENEREATENEWINSTRUCTIONS_H
-#define GENEREATENEWINSTRUCTIONS_H
+#ifndef GENERATENEWINSTRUCTIONS_H
+#define GENERATENEWINSTRUCTIONS_H
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/Function.h"
@@ -38,7 +38,10 @@ namespace partGen{
             remoteSrc = rs;
             remoteDst = rd;
             owner = fg;
+            assert( (~remoteSrc||~remoteDst) && "instruction coming in from another partition and going out to another partition");
         }
+        // map all the way from a original bb to the new bb in the new function
+        // can potentially map twice, 1. due to br target replacement 2. new function
         BasicBlock* mapOriginalBBDest2CurrentBBDest(BasicBlock* originalDest)
         {
             std::map<BasicBlock*,BasicBlock*>& destRemap= owner->part->partitionBranchRemap;
@@ -81,8 +84,12 @@ namespace partGen{
             else if(isa<Constant>(*oldVal))
             {
                 Constant* oldConst = &(cast<Constant>(*oldVal));
-                if(owner->originalConst2NewConst.find(oldConst)!=owner->originalConst2NewConst.end())
-                    return owner->originalConst2NewConst[oldConst];
+                if(owner->originalConst2NewConst.find(oldConst)==owner->originalConst2NewConst.end())
+                    // make a new constant? just return the old one
+                    owner->originalConst2NewConst[oldConst] = oldConst;
+
+                return owner->originalConst2NewConst[oldConst];
+
             }
             return 0;
 
@@ -173,11 +180,66 @@ namespace partGen{
             Instruction* rtIns = &(cast<Instruction>(*rtVal));
             return rtIns;
         }
-        /*Instruction* generatePhiNode(IRBuilder<>& builder)
+        BasicBlock* searchNewIncomingBlock(BasicBlock* originalPred)
         {
+            // we wanna find the corresponding incoming BB for the originalPred
+            assert(owner->oldBB2newBBMapping.find(originalPred)!=owner->oldBB2newBBMapping.end()
+                    &&"incoming block was not kept");
+            return owner->oldBB2newBBMapping[originalPred];
+        }
+
+        Instruction* generatePhiNode(IRBuilder<>& builder)
+        {
+            errs()<<"generate phi\n";
             PHINode* pInst = &(cast<PHINode>(*originalInsn));
-            pInst->get
-        }*/
+            PHINode* nPhi = builder.CreatePHI(pInst->getType(),pInst->getNumIncomingValues());
+            for(unsigned i =  0; i<pInst->getNumIncomingValues(); i++)
+            {
+                Value* curInValue = pInst->getIncomingValue(i);
+                BasicBlock* curInBlock = pInst->getIncomingBlock(i);
+                Value* newInValue = findValueInNewFunction(curInValue);
+                BasicBlock* newInBB = searchNewIncomingBlock(curInBlock);
+                nPhi->addIncoming(newInValue,newInBB);
+            }
+            errs()<<"finish generate phi\n";
+            return nPhi;
+        }
+        Instruction* generateSelectOperation(IRBuilder<>& builder)
+        {
+            SelectInst* originalSelect = &(cast<SelectInst>(*originalInsn));
+            Value* oldCond = originalSelect->getCondition();
+            Value* newCond = findValueInNewFunction(oldCond);
+
+            Value* oldTrue = originalSelect->getTrueValue();
+            Value* newTrue = findValueInNewFunction(oldTrue);
+
+            Value* oldFalse = originalSelect->getFalseValue();
+            Value* newFalse = findValueInNewFunction(oldFalse);
+
+            Value* newSelectVal = builder.CreateSelect(newCond,newTrue,newFalse);
+            SelectInst* newSelect = &(cast<SelectInst>(*newSelectVal));
+            return newSelect;
+
+        }
+        Instruction* generateCmpOperation(IRBuilder<>& builder)
+        {
+            CmpInst* originalCmp = &(cast<CmpInst>(*originalInsn));
+            Value* originalLHS = originalCmp->getOperand(0);
+            Value* originalRHS = originalCmp->getOperand(1);
+
+            Value* newLHS = findValueInNewFunction(originalLHS);
+            Value* newRHS = findValueInNewFunction(originalRHS);
+            Value* cmpInstVal = 0;
+
+            if(originalInsn->getOpcode()==Instruction::ICmp)
+                cmpInstVal = builder.CreateICmp(originalCmp->getPredicate(),newLHS,newRHS);
+            else if(originalInsn->getOpcode()==Instruction::FCmp)
+                cmpInstVal = builder.CreateFCmp(originalCmp->getPredicate(),newLHS,newRHS);
+            CmpInst* cmpInst = 0;
+            if(cmpInstVal)
+                cmpInst = &(cast<CmpInst>(*cmpInstVal));
+            return cmpInst;
+        }
 
         void generatePushRemoteData(IRBuilder<>& builder)
         {
@@ -197,21 +259,33 @@ namespace partGen{
             Value* ptrVal = owner->originalVal2ArgVal[originalInsn];
             return builder.CreateLoad(ptrVal,true);
         }
-        Value* getAppropriateValue4Use(Value* oldValue)
+        ConstantInt* generatePushRemoteBrConst(int val2Push)
         {
-            // this is to find the new value from the old value
-            if(isa<Instruction>(*oldValue))
-            {
-                // there must be a instruction which generate this value
-                // in the new function, actual or src
-                Instruction* oldIns = &(cast<Instruction>(oldValue));
-                assert(owner->originalIns2NewIns.find(oldIns)!=owner->originalIns2NewIns.end() &&
-                        "unavailable value for use locally");
-
-            }
+            assert(owner->originalVal2ArgVal.find(originalInsn)!=owner->originalVal2ArgVal.end()&&"can't find port to push br tag to");
+            IntegerType* dstNumType = cast<IntegerType>(owner->originalVal2ArgVal[originalInsn]->getType());
+            ConstantInt* const2Push = ConstantInt::get(dstNumType,val2Push);
+            return const2Push;
         }
 
-        void generateNonReturnTerminator(IRBuild<>& builder)
+        void populatePushRemoteBrTagBB(BasicBlock* newOwnerBB, ConstantInt* const2Push, BasicBlock* sucAfter)
+        {
+            IRBuilder<> builder(newOwnerBB);
+            Value* ptrVal = owner->originalVal2ArgVal[originalInsn];
+            builder.CreateStore(const2Push,ptrVal,true);
+            builder.CreateBr(mapOriginalBBDest2CurrentBBDest(sucAfter));
+
+        }
+        // just check if branch remap is there
+        BasicBlock* getIntraPartitionOriginalSuccessor(BasicBlock* suc)
+        {
+            if(owner->part->partitionBranchRemap.find(suc)!=owner->part->partitionBranchRemap.end())
+            {
+                return owner->part->partitionBranchRemap[suc];
+            }
+            return suc;
+        }
+
+        void generateNonReturnTerminator(IRBuilder<>& builder)
         {
             TerminatorInst* curTermInst = &(cast<TerminatorInst>(*originalInsn));
             if(remoteSrc)
@@ -222,94 +296,145 @@ namespace partGen{
                 // since there is a requirement for remoteSrc
                 // we definitely need a switch
                 generateGenericSwitchStatement(builder,receivedDst,curTermInst);
+                return;
             }
 
-            if(remoteDst)
+            if(!owner->part->needBranchTag(originalInsn->getParent()) && !remoteDst)
             {
-                // we need to compute the number successor, and generate the write instruction
+                // not remote and we dont need no branch tag, gonna be a unconditional jump
+                // just double check
+                BasicBlock* suc = getIntraPartitionOriginalSuccessor( curTermInst->getSuccessor(0));
+                for(unsigned i = 1; i<curTermInst->getNumSuccessors(); i++)
+                {
+                    BasicBlock* curSuc = getIntraPartitionOriginalSuccessor( curTermInst->getSuccessor(i));
+                    assert(suc==curSuc && "should be unconditional branch");
+                }
+                BasicBlock* newBB = mapOriginalBBDest2CurrentBBDest(suc);
+                builder.CreateBr(newBB);
+            }
+            else
+            {
+                // now we do a select for the things to send, and send them before we branch
                 if(isa<BranchInst>(*originalInsn))
                 {
                     BranchInst* curBranch = &(cast<BranchInst>(*originalInsn));
                     assert(!curBranch->isUnconditional() && "no need to send unconditional token to other partitions");
                     // compute the number to send
                     Value* brCond = curBranch->getCondition();
-                    std::string brDestBase = originalInsn->getParent()->getName();
-                    BasicBlock* dest0 = BasicBlock::Create(owner->addedFunction->getContext(),
-                                                          brDestBase+"_br0",owner->addedFunction);
-                    BasicBlock* dest1 = BasicBlock::Create(owner->addedFunction->getContext(),
-                                                          brDestBase+"_br1",owner->addedFunction);
-
-
-
+                    Value* newBrCond = findValueInNewFunction(brCond);
+                    assert(newBrCond!=0 && "no corresponding condition found");
+                    if(remoteDst)
+                    {
+                        ConstantInt* const2Push0 = generatePushRemoteBrConst(0);
+                        ConstantInt* const2Push1 = generatePushRemoteBrConst(1);
+                        Value* selCreated = builder.CreateSelect(newBrCond,const2Push0,const2Push1);
+                        Value* ptrVal = owner->originalVal2ArgVal[originalInsn];
+                        builder.CreateStore(selCreated,ptrVal,true);
+                    }
+                    BasicBlock* oldIfTrue = curBranch->getSuccessor(0);
+                    BasicBlock* oldIfFalse = curBranch->getSuccessor(1);
+                    BasicBlock* dest0 = mapOriginalBBDest2CurrentBBDest(oldIfTrue);
+                    BasicBlock* dest1 = mapOriginalBBDest2CurrentBBDest(oldIfFalse);
+                    builder.CreateCondBr(newBrCond,dest0,dest1);
                 }
+                else if(isa<SwitchInst>(*originalInsn))
+                {
+                    SwitchInst* curSwitch = &(cast<SwitchInst>(*originalInsn));
+                    Value* swCond = curSwitch->getCondition();
+                    Value* newSwCond = findValueInNewFunction(swCond);
+                    std::map<BasicBlock*, BasicBlock*> originalSuccessor2NewBB;
+
+                    auto defaultCaseIter = curSwitch->case_default();
+                    BasicBlock* defaultSuc = defaultCaseIter.getCaseSuccessor();
+
+
+                    if(remoteDst) // got to do IR level branch to send different things -- and each
+                                  // branch would then go to their own destination -- now we care about
+                                  // what value we send out and what final succesor we end up in
+                                  // we will iterate through the original successors, and say a few case
+                                  // both go to that successor, we will just create one new bb
+                    {
+                        std::string swDstBase = originalInsn->getParent()->getName();
+                        std::map<BasicBlock*, ConstantInt*> originalSuccessor2Const2Send;
+                        for(unsigned int swDstInd = 0; swDstInd< curSwitch->getNumSuccessors(); swDstInd++ )
+                        {
+                            BasicBlock* curSuccessor = curSwitch->getSuccessor(swDstInd);
+                            std::string swDstName = swDstBase+"_sw"+boost::lexical_cast<std::string>(swDstInd);
+
+                            BasicBlock* dest = BasicBlock::Create(owner->addedFunction->getContext(),
+                                                                  swDstName,owner->addedFunction);
+                            if(originalSuccessor2NewBB.find(curSuccessor) == originalSuccessor2NewBB.end())
+                            {
+                                originalSuccessor2NewBB[curSuccessor] = dest;
+                                originalSuccessor2Const2Send[curSuccessor] = generatePushRemoteBrConst(swDstInd);
+                            }
+                        }
+                        // check every case, see which successor do they branch to and branch
+                        std::set<BasicBlock*> populated;
+                        BasicBlock* sendTagBB = originalSuccessor2NewBB[defaultSuc];
+                        ConstantInt* constant2Send = originalSuccessor2Const2Send[defaultSuc];
+                        BasicBlock* sucAfterSend = mapOriginalBBDest2CurrentBBDest(defaultSuc);
+                        populatePushRemoteBrTagBB(sendTagBB,constant2Send,sucAfterSend);
+                        populated.insert(sendTagBB);
+                        // do the samething for everycase
+
+                        for(auto caseIter = curSwitch->case_begin(); caseIter!=curSwitch->case_end(); caseIter++)
+                        {
+                            BasicBlock* curCaseSuc = caseIter.getCaseSuccessor();
+                            BasicBlock* curSendTagBB = originalSuccessor2NewBB[curCaseSuc];
+                            if(populated.count(curSendTagBB))
+                                continue;
+                            ConstantInt* curConstant2Send = originalSuccessor2Const2Send[curCaseSuc];
+                            BasicBlock* curSucAfterSend = mapOriginalBBDest2CurrentBBDest(curCaseSuc);
+                            populatePushRemoteBrTagBB(curSendTagBB,curConstant2Send,curSucAfterSend);
+                            populated.insert(curSendTagBB);
+                        }
+
+                    }
+                    else
+                    {
+                        // no remote push, we just recreate the switchInst with remapping of successor
+                        for(unsigned int swDstInd = 0; swDstInd< curSwitch->getNumSuccessors(); swDstInd++ )
+                        {
+                            BasicBlock* curSuccessor = curSwitch->getSuccessor(swDstInd);
+                            if(originalSuccessor2NewBB.find(curSuccessor) == originalSuccessor2NewBB.end())
+                            {
+                                originalSuccessor2NewBB[curSuccessor] = mapOriginalBBDest2CurrentBBDest(curSuccessor);
+                            }
+                        }
+                    }
+                    // create a new switchInst, the default case will be the new BB
+                    BasicBlock* newDefaultSuc = originalSuccessor2NewBB[defaultSuc];
+                    SwitchInst* newSwInst = builder.CreateSwitch(newSwCond,newDefaultSuc);
+                    for(auto caseIter = curSwitch->case_begin(); caseIter!= curSwitch->case_end(); caseIter++)
+                    {
+                        BasicBlock* curCaseSuc = caseIter.getCaseSuccessor();
+                        ConstantInt* oldCon = caseIter.getCaseValue();
+                        ConstantInt* newCon = &cast<ConstantInt>(*findValueInNewFunction(oldCon));
+                        BasicBlock* newCurSuc = originalSuccessor2NewBB[curCaseSuc];
+                        newSwInst->addCase(newCon,newCurSuc);
+                    }
+                }
+                else
+                    assert(false && "non branch/switch control flow encoutered");
             }
-            else
-            {
-                // we generate the local non return terminator
-                // and possibly write the tag into the channel
-                bool artificialUnconditional = false;
-                std::vector<BasicBlock*>& endWithUncond = owner->part->singleSucBBs;
-                if(std::find(endWithUncond.begin(),endWithUncond.end(), originalInsn->getParent())!=endWithUncond.end())
-                    artificialUnconditional = true;
-
-                rtStr = generateControlFlow(cast<TerminatorInst>(*originalInsn),remoteDst,seqNum, owner->fifoArgs, owner->functionArgs,destRemap,artificialUnconditional);
-            }
-
-
+        }
+        void setNewInstructionMap(Instruction* newIns)
+        {
+            assert(owner->originalIns2NewIns.find(originalInsn) == owner->originalIns2NewIns.end() && "instruction mapping already exist");
+            owner->originalIns2NewIns[originalInsn] = newIns;
         }
 
         void generateStatement(IRBuilder<>& builder)
         {
-            //FIXME: terminator generation not done
-            // all the branch condition needs to be generated
+            errs()<<"ready to generate new statement for original ins "<<*originalInsn;
             if(originalInsn->isTerminator())
             {
                 if(!isa<ReturnInst>(*originalInsn))
                 {
                     assert((isa<BranchInst>(*originalInsn) || isa<SwitchInst>(*originalInsn))
                            && "only support branch and swith inst for control flow");
-
-                    // as a terminator, we should check if this dude has
-                    // any successors
-                    TerminatorInst* curTermInst = &(cast<TerminatorInst>(*originalInsn));
-
-                    if(remoteSrc)
-                    {
-                        // load from the func arg
-                        Value* receiverPtr = owner->originalVal2ArgVal[curTermInst];
-                        Value* receivedDst = builder.CreateLoad(receiverPtr,true);
-                        generateGenericSwitchStatement(builder,receivedDst,curTermInst);
-                    }
-                    if(remoteDst)
-                    {
-                        // we need to compute the number successor, and generate the write instruction
-                        if(isa<BranchInst>(*originalInsn))
-                        {
-                            BranchInst* curBranch = &(cast<BranchInst>(*originalInsn));
-                            assert(!curBranch->isUnconditional() && "no need to send unconditional token to other partitions");
-                            // compute the number to send
-                            Value* brCond = curBranch->getCondition();
-                            std::string brDestBase = originalInsn->getParent()->getName();
-                            BasicBlock* dest0 = BasicBlock::Create(owner->addedFunction->getContext(),
-                                                                  brDestBase+"_br0",owner->addedFunction);
-                            BasicBlock* dest1 = BasicBlock::Create(owner->addedFunction->getContext(),
-                                                                  brDestBase+"_br1",owner->addedFunction);
-
-
-
-                        }
-                    }
-                    else
-                    {
-                        // we generate the local non return terminator
-                        // and possibly write the tag into the channel
-                        bool artificialUnconditional = false;
-                        std::vector<BasicBlock*>& endWithUncond = owner->part->singleSucBBs;
-                        if(std::find(endWithUncond.begin(),endWithUncond.end(), originalInsn->getParent())!=endWithUncond.end())
-                            artificialUnconditional = true;
-
-                        rtStr = generateControlFlow(cast<TerminatorInst>(*originalInsn),remoteDst,seqNum, owner->fifoArgs, owner->functionArgs,destRemap,artificialUnconditional);
-                    }
+                    generateNonReturnTerminator(builder);
                 }
                 else
                 {
@@ -324,7 +449,10 @@ namespace partGen{
                  // is not available yet -- at the end, we will reorder the instructions
             {
                 if(remoteSrc)
-                    generateGettingRemoteData(builder);
+                {
+                    Instruction* getRemoteData = generatePullRemoteData(builder);
+                    setNewInstructionMap(getRemoteData);
+                }
                 else
                 {
                     // locally generated, let's ensure all the values have been generated -- if they are instructions
@@ -340,38 +468,20 @@ namespace partGen{
                     else if(originalInsn->getOpcode()<Instruction::MemoryOpsEnd &&originalInsn->getOpcode() >= Instruction::MemoryOpsBegin  )
                         newlyGeneratedIns = generateMemoryOperation(builder);
                     else if(originalInsn->getOpcode()<Instruction::CastOpsEnd && originalInsn->getOpcode()>= Instruction::CastOpsBegin)
-                        newlyGenerateIns = generateCastOperation(builder);
+                        newlyGeneratedIns = generateCastOperation(builder);
                     else if(originalInsn->getOpcode()==Instruction::PHI)
-                        newlyGenerateIns = generatePhiNode(builder);
+                        newlyGeneratedIns = generatePhiNode(builder);
                     else if(originalInsn->getOpcode()==Instruction::Select)
-                    {
-                        if(remoteSrc)
-                            rtStr = generateGettingRemoteData(*insn,seqNum,owner->fifoArgs);
-                        else
-                        {
-                            rtStr = generateSelectOperations(cast<SelectInst>(*insn), remoteDst, seqNum,owner->fifoArgs,owner->functionArgs);
-                        }
-                    }
-                    else if(insn->getOpcode()==Instruction::ICmp || insn->getOpcode()==Instruction::FCmp)
-                    {
+                        newlyGeneratedIns = generateSelectOperation(builder);
+                    else if(originalInsn->getOpcode()==Instruction::ICmp || originalInsn->getOpcode()==Instruction::FCmp)
+                        newlyGeneratedIns = generateCmpOperation(builder);
+                    assert(newlyGeneratedIns && "unhandled old instruction in generating new instruction");
+                    setNewInstructionMap(newlyGeneratedIns);
 
-                        // got to generate the cmpare statement
-                        if(remoteSrc)
-                            rtStr = generateGettingRemoteData(*insn,seqNum,owner->fifoArgs);
-                        else
-                        {
-                            rtStr = generateCmpOperations(cast<CmpInst>(*insn), remoteDst, seqNum,owner->fifoArgs,owner->functionArgs);
-                        }
-                    }
-                    else
-                    {
-                        errs()<<" problem unhandled instruction in generate single statement";
-                        exit(1);
-                    }
                 }
             }
         }
     };
 }
 
-#endif // GENEREATENEWINSTRUCTIONS_H
+#endif // GENERATENEWINSTRUCTIONS_H

@@ -23,7 +23,10 @@ namespace partGen{
                                    std::set<Instruction*>& srcInstruction,
                                    std::set<Instruction*>& instToSend,
                                    Instruction* retInstPtr,
-                                   int seqNum)
+                                   int seqNum,
+                                   std::map<Instruction*,Value*>& ins2AllocatedChannel,
+                                   std::vector<Value*>* argList)
+
     {
         LLVMContext& context = part->top->targetFunc->getContext();
         // let's go through all the things we need to make function signature
@@ -70,7 +73,10 @@ namespace partGen{
             Value* curArg = argValIter;
             // name every argument the same as the original args name
             if(isa<Argument>(*oldVal))
+            {
                 curArg->setName(oldVal->getName());
+                argList->push_back(oldVal);
+            }
             else
             {
                 assert(isa<Instruction>(*oldVal) && "neither func arg nor instruction");
@@ -81,12 +87,30 @@ namespace partGen{
                 int oldInsIndex = getInstructionSeqNum(oldIns);
                 newArgName=newArgName+boost::lexical_cast<std::string>(oldInsIndex);
                 if(srcInstruction.count(oldIns))
+                {
                     newArgName=newArgName+"_rd";
+                    assert(ins2AllocatedChannel.find(oldIns)!=ins2AllocatedChannel.end()
+                            &&"partition does not see allocated channel");
+                    argList->push_back(ins2AllocatedChannel[oldIns]);
+                }
                 else
+                {
                     newArgName=newArgName+"_wr";
+                    assert(ins2AllocatedChannel.find(oldIns)==ins2AllocatedChannel.end()
+                            &&"sr partition sees allocated channel");
+
+                    Value* funcArgVal = originalVal2ArgVal[oldVal];
+                    assert(isa<PointerType>(*(funcArgVal->getType())) && "non pointer type used for passing val");
+                    PointerType* curType = &(cast<PointerType>(*(funcArgVal->getType())));
+                    Type* eleType = curType->getPointerElementType();
+                    AllocaInst* allocaEle = new AllocaInst(eleType);
+                    ins2AllocatedChannel[oldIns]=allocaEle;
+                    argList->push_back(allocaEle);
+                }
                 curArg->setName(newArgName);
             }
         }
+        errs()<<"finished populate function argument list\n";
         actualNewFunc->addFnAttr("dppcreated","true");
         return actualNewFunc;
     }
@@ -201,7 +225,7 @@ namespace partGen{
     {
         std::set<BasicBlock*> outsideBBs;
         // create dominator
-        createNewBBFromOldBB(part->dominator,addedFunction,outsideBBs);
+        createNewBBFromOldBB(part->dominator,outsideBBs);
         for(auto bbIter = part->AllBBs.begin(); bbIter!= part->AllBBs.end(); bbIter++)
         {
             BasicBlock* curBB = *bbIter;
@@ -214,6 +238,10 @@ namespace partGen{
             for(auto iter = outsideBBs.begin(); iter!=outsideBBs.end(); iter++)
                 errs()<<(*iter)->getName()<<"\n";
             extraEndBlock = BasicBlock::Create(addedFunction->getContext(),"extraEnd",addedFunction);
+            // all these outsideBbs will be maped to extraEndBlock
+            for(auto iter = outsideBBs.begin(); iter!=outsideBBs.end(); iter++)
+                oldBB2newBBMapping[*iter]=extraEndBlock;
+
         }
 
         LoopInfo* li = part->top->getAnalysisIfAvailable<LoopInfo>();
@@ -316,9 +344,9 @@ namespace partGen{
         std::set<Instruction*>* srcIns = 0;
         std::set<Instruction*>* actualIns = 0;
         if(part->sourceBBs.find(curBB)!=part->sourceBBs.end())
-            srcIns =  (*(part->sourceBBs))[curBB];
-        if(part->insBBs->find(curBB)!=part->insBBs->end())
-            actualIns = (*(part->insBBs))[curBB];
+            srcIns =  part->sourceBBs[curBB];
+        if(part->insBBs.find(curBB)!=part->insBBs.end())
+            actualIns = part->insBBs[curBB];
         // we only generate srcIns, terminators will only be generated
         // if it is not an actualIns here -- meaning it gets tag from somewhere
         // else, realize termnator cannot be a sourceIns, as nobody uses
@@ -326,7 +354,7 @@ namespace partGen{
         if(srcIns)
         {
             int instructionSeq = -1;
-            for(BasicBlock::iterator insPt = curBB->begin(), insEnd = curBB->end(); insPt != insEnd; insPt++)
+            for(auto insPt = curBB->begin(), insEnd = curBB->end(); insPt != insEnd; insPt++)
             {
                 instructionSeq ++;
                 // not generating actualIns
@@ -347,8 +375,12 @@ namespace partGen{
             }
         }
     }
+    // the instructions may come from operands which can create circular dependencies
+    // there must be some phi node somewhere, so in generating phinode, we do not populate
+    // yet
     void DppFunctionGenerator::generateActualInstruction(Instruction* originalIns)
     {
+        errs()<<"ready to generate instruction:"<<*originalIns<<"\n";
         if(originalIns2NewIns.find(originalIns)==originalIns2NewIns.end())
         {
             BasicBlock* originalParentBB = originalIns->getParent();
@@ -368,7 +400,12 @@ namespace partGen{
                     BasicBlock* originalOperandBB = originalOperandIns->getParent();
                     if(part->insBBs.find(originalOperandBB)!=part->insBBs.end() &&
                       part->insBBs[originalOperandBB]->count(originalOperandIns))
-                        generateActualInstruction(originalOperandIns);
+                    {
+                        if(!isa<PHINode>(*originalOperandIns))
+                        {
+                            generateActualInstruction(originalOperandIns);
+                        }
+                    }
                     else // this must be a source instruction -- we must have already generated it
                     {
                         assert(originalIns2NewIns.find(originalOperandIns)!=originalIns2NewIns.end() &&
@@ -398,8 +435,8 @@ namespace partGen{
         // so we can invoke generator for instruction in another BB, and we can
         // see actualIns already generated when we are at the current BB
         std::set<Instruction*>* actualIns = 0;
-        if(part->insBBs->find(curBB)!=part->insBBs->end())
-            actualIns = (*(part->insBBs))[curBB];
+        if(part->insBBs.find(curBB)!=part->insBBs.end())
+            actualIns = part->insBBs[curBB];
         if(actualIns)
         {
             int instructionSeq = -1;
@@ -411,6 +448,7 @@ namespace partGen{
                     // if the mapping has not been done, we will generate it here
                     generateActualInstruction(insPt);
                 }
+
             }
         }
     }
@@ -418,7 +456,9 @@ namespace partGen{
 
 
 
-    Function* DppFunctionGenerator::generateFunction(int seqNum)
+    Function* DppFunctionGenerator::generateFunction(int seqNum,
+                                                     std::map<Instruction*,Value*>& ins2AllocatedChannel,
+                                                     std::vector<Value*>* argList)
     {
         std::set<Value*> topFuncArg;
         std::set<Instruction*> srcInstFromOtherPart;
@@ -426,9 +466,12 @@ namespace partGen{
         ReturnInst* retInstPtr = 0;
         collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart, retInstPtr);
 
-        addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart,retInstPtr,seqNum);
+        addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart,retInstPtr,seqNum,
+                                             ins2AllocatedChannel, argList);
+
 
         createNewFunctionBBs(retInstPtr!=0);
+        errs()<<"Created Basic Blocks in new functions\n";
         // now we populate the newly created BBs
 
         // this pass we populate the flowOnlyBB
@@ -444,12 +487,52 @@ namespace partGen{
             else if(part->sourceBBs.find(curBB)!=part->sourceBBs.end())
                 populateContentBBSrcIns(curBB);
         }
+        errs()<<"populated src and flow BBs\n";
         // run through the bblist again, now we populate the actualIns
         for(auto insBBIter = part->insBBs.begin(); insBBIter!=part->insBBs.end(); insBBIter++ )
         {
             BasicBlock* curInsBB = insBBIter->first;
             populateContentBBActualIns(curInsBB);
         }
+        errs()<<"populated actual content BBs\n";
+        // finally we need to properly order everything within each BBs
+        // note if a bb is only in sourceBBs/insBBs, then its instructions
+        // are already properly ordered, else the interleaving maybe different
+        // -- we will have src instruction supposed to be after ins but end up
+        // being before
+        for(auto bbIter = part->AllBBs.begin(); bbIter!= part->AllBBs.end(); bbIter++)
+        {
+            BasicBlock* curBB = *bbIter;
+            if(part->isFlowOnlyBB(curBB))
+                continue;
+            if(part->insBBs.find(curBB)!=part->insBBs.end() && part->sourceBBs.find(curBB)!=part->sourceBBs.end())
+            {
+                std::set<Instruction*>* allActualIns= part->insBBs[curBB];
+                std::set<Instruction*>* allSrcIns = part->sourceBBs[curBB];
+                BasicBlock* bbInNewFunction = oldBB2newBBMapping[curBB];
+                Instruction* lastInserted = 0;
+                for(auto insIter = curBB->begin(); insIter!= curBB->end(); insIter++)
+                {
+                    //insIter / Instruction*
+                    if((allSrcIns->count(insIter) || allActualIns->count(insIter)) && !isa<TerminatorInst>(*insIter))
+                    {
+                        Instruction* newIns = originalIns2NewIns[insIter];
+                        newIns->removeFromParent();
+                        if(lastInserted!=0)
+                            newIns->insertAfter(lastInserted);
+                        else
+                        {
+                            newIns->insertBefore(bbInNewFunction->begin());
+                            lastInserted = newIns;
+                        }
+                    }
+                }
+            }
+        }
+        errs()<<"finished performing reordering of instructions in new function bbs\n";
+        // done reordering
+        return addedFunction;
+
     }
 
 }

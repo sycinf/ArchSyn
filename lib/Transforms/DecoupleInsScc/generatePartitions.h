@@ -77,6 +77,10 @@ namespace partGen{
         // e.g. in the original cfg: A->B->C, and only A and C are in
         // in partition, we have a map which maps B to C
         std::map<BasicBlock*,BasicBlock*> partitionBranchRemap;
+        // we also need another mapping, so phi can know which
+        // bb in the new function to use for each incoming edge
+        std::map<BasicBlock*,BasicBlock*> partitionPhiRemap;
+
         std::set<BasicBlock*> singleSucBBs;
         // the dominator for all basicblocks in this partition
         // the entry block for this partition will be here
@@ -104,7 +108,9 @@ namespace partGen{
         bool needBranchTag(BasicBlock* curBB);
         bool hasActualInstruction(Instruction* target);
         bool receiverPartitionsExist(Instruction* insPt);
-        void generateDecoupledFunction(int seqNum);
+        Function* generateDecoupledFunction(int seqNum,
+                                            std::map<Instruction*,Value*>& ins2Channel,
+                                            std::vector<Value*>* argList);
 
 
     };

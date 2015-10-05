@@ -381,7 +381,9 @@ namespace partGen {
                     assert((!curBranchKeeper.empty()) &&
                            "an included basic block's successor does not lead \
                            to any other included basic block--not even BBs outside of the BB");
-                    this->partitionBranchRemap[brSuccessor] = curBranchKeeper.at(0);
+                    BasicBlock* newDst = curBranchKeeper.at(0);
+                    this->partitionBranchRemap[brSuccessor] = newDst;
+
                 }
                 // now remove this keeper from toRemove
                 assert(toRemove.erase(curKeeper) && "cannot remove keeper from removal list -- it is absent\
@@ -431,6 +433,7 @@ namespace partGen {
                     }
                 }
             }
+
         }
 
         void DAGPartition::checkDominator()
@@ -532,7 +535,9 @@ namespace partGen {
             }
             return false;
         }
-        void DAGPartition::generateDecoupledFunction(int seqNum)
+        Function* DAGPartition::generateDecoupledFunction(int seqNum,
+                                                          std::map<Instruction*,Value*>& ins2AllocatedChannel,
+                                                          std::vector<Value*>* argList)
         {
             // we collect all the basic blocks
             // and remove what ever redundant BasicBlocks
@@ -556,43 +561,9 @@ namespace partGen {
 
             /**** end of check ************/
             struct DppFunctionGenerator dpg(this);
-            dpg.generateFunction(seqNum);
-
-            /*std::set<Value*> topFuncArg;
-            std::set<Instruction*> srcInstFromOtherPart;
-            std::set<Instruction*> instToOtherPart;
-            Instruction* retInstPtr = 0;
-            collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart, retInstPtr);*/
-            // associate the argument of the new function with the instruction coming in and out of
-            // this partition function -- original instruction to index in the argument list
+            return dpg.generateFunction(seqNum,ins2AllocatedChannel,argList);
 
 
-            /*std::map<BasicBlock*,BasicBlock*> oldBB2newBBMapping;
-            createNewFunctionBBs(addedFunction,oldBB2newBBMapping);
-            // now we populate the newly created BBs
-            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++)
-            {
-                BasicBlock* curBB = *bbIter;
-                if(isFlowOnlyBB(curBB))
-                {
-                    populateFlowOnlyBB(addedFunction,curBB,originalVal2NewArg,oldBB2newBBMapping);
-
-                }
-            }*/
-            errs()<<"done with partition\n";
-            // got to collect the argument types
-//SHAOYI: this is the new part
-/*            Function* topFunction = top->targetFunc;
-            Module* topModule = top->targetFunc->getParent();
-            std::string partFuncNameBase = topFunction->getName()+boost::lexical_cast<std::string>(seqNum);
-            std::string partFuncName = partFuncNameBase;
-            int vCountSuf = 0;
-            while(topModule->getFunction(partFuncName))
-            {
-                partFuncName = partFuncNameBase+"_v"+boost::lexical_cast<std::string>(vCountSuf);
-                vCountSuf++;
-            }*/
-            //BasicBlock& entryBB = top->targetFunc->getEntryBlock();
         }
 
 
@@ -903,15 +874,62 @@ namespace partGen {
         bool change = generatePartition();
         if(change)
         {
-
             checkAcyclicDependency();
+            std::vector<Function*> generatedFunctions;
+            std::map<Instruction*,Value*> ins2AllocatedChannel;
+            std::map<Function*,std::vector<Value*>*> ins2ArgList;
             for(unsigned k = 0; k<collectedPartition.size(); k++)
             {
                 DAGPartition* curPartition = collectedPartition.at(k);
                 // for each partition, we will be generating a whole new function
                 // and insert it before the first instruction in the entry block
-                curPartition->generateDecoupledFunction(k);
+                // also we need to generate the argList when we generate the function
+                // that is, we make a vector of values --- some of these are
+                // the args of original, some are going to be just a place holder -- a pointer
+                // to a allocaed data structure
+                // we ll have a map of instruction --> vector of pointers (the first one being the producer)
+                std::vector<Value*>* curFuncArgList = new std::vector<Value*>();
+                Function* generatedFunc = curPartition->generateDecoupledFunction(k,ins2AllocatedChannel,curFuncArgList);
+                generatedFunctions.push_back(generatedFunc);
+                ins2ArgList[generatedFunc] = curFuncArgList;
+
             }
+            //FIXME: the data structure for passing things around
+            // need to be alloca'ed -- we first need to know
+            // what are being passed around, this should be retrieved when we are creating functions
+            //
+            // so how do we do this? we will create a vector for each function
+            // one for incoming value, one for out going value -- all corresponding to instructions
+            // now we count how many needs to be communicated, and for each, how many outgoing
+            // port are there, we can allocate a particular structure, it would be
+            // consisted of one pointer connected to the producer and multiple pointers
+            // connected to the consumers
+            //
+
+
+            //FIXME: now we have all the newly generated function
+            // let's just delete what ever BB we originally have
+            // and replace them with a straight line bb calling
+            // each function in succession
+            BasicBlock* newSingleBB = BasicBlock::Create(this->targetFunc->getContext(),"newStreamTypeBB",this->targetFunc);
+            // do the alloca
+            for(auto allocaIter = ins2AllocatedChannel.begin(); allocaIter!=ins2AllocatedChannel.end(); allocaIter++)
+            {
+                Value* actualAlloca = allocaIter->second;
+                AllocaInst* curAllocaInst = &(cast<AllocaInst>(*actualAlloca));
+                curAllocaInst->insertBefore(newSingleBB->begin());
+            }
+
+            for(auto funcPtrIter = generatedFunctions.begin(); funcPtrIter!=generatedFunctions.end(); funcPtrIter++)
+            {
+                std::vector<Value*>* curFuncArgList = ins2ArgList[*funcPtrIter];
+                ArrayRef<Value*> argsVal(*curFuncArgList);
+                CallInst::Create(*funcPtrIter,argsVal,(*funcPtrIter)->getName(),newSingleBB->end());
+                delete curFuncArgList;
+            }
+            // final part, remove all the original BB
+
+
         }
         // clear up
         dagNodeMap.clear();
