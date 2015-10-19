@@ -19,10 +19,22 @@
 using namespace partGen;
 
 namespace partGen{
+    struct PhiInPair
+    {
+        BasicBlock* predBB;
+        Value* corVal;
+        PhiInPair(BasicBlock* bb, Value* val)
+        {
+            predBB = bb;
+            corVal = val;
+        }
+    };
+
     struct DppFunctionGenerator
     {
         DAGPartition* part;
         std::map<BasicBlock*,BasicBlock*> oldBB2newBBMapping;
+
         BasicBlock* extraEndBlock = 0;
         Function* addedFunction;
         // some value are read from argument, we need this relation
@@ -33,9 +45,7 @@ namespace partGen{
         std::map<Instruction*,Instruction*> originalIns2NewIns;
 
         std::map<Constant*,Constant*> originalConst2NewConst;
-
-        // for PhiNode, we keep generating operand till we hit another
-        // phiNode
+        std::set<PHINode*> oldPhiNode;
 
         DppFunctionGenerator(DAGPartition* myPart)
         {
@@ -68,11 +78,12 @@ namespace partGen{
         void populateContentBBSrcIns(BasicBlock* curBB);
         void populateContentBBActualIns(BasicBlock* curBB);
         void generateActualInstruction(Instruction* originalIns);
-
+        void completePhiNodes();
         Function* generateFunction(int seqNum,
                                    std::map<Instruction*,Value*>& ins2AllocatedChannel,
                                    std::vector<Value*>* argList);
-
+        Value* mapOldValue2NewValueInNewFunction(Value* oldVal);
+        BasicBlock* searchNewIncomingBlock(BasicBlock* originalPred);
     };
 }
 

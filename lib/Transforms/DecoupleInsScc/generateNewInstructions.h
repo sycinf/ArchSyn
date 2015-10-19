@@ -53,6 +53,7 @@ namespace partGen{
 
         void generateGenericSwitchStatement(IRBuilder<>& builder,Value* cond,TerminatorInst* originalTerm)
         {
+            errs()<<"into generate generic\n";
             IntegerType* dstNumType = cast<IntegerType>(cond->getType());
             int numSuccessor = originalTerm->getNumSuccessors();
             assert(numSuccessor>1 && "try to generate switch statement for single successor terminator ");
@@ -65,10 +66,12 @@ namespace partGen{
                 BasicBlock* curCaseDest = mapOriginalBBDest2CurrentBBDest(originalDest);
                 swInst->addCase(curCase,curCaseDest);
             }
+
+            errs()<<"after generate generic\n";
         }
         Value* findValueInNewFunction(Value* oldVal)
         {
-            if(isa<Instruction>(*oldVal))
+            /*if(isa<Instruction>(*oldVal))
             {
                 Instruction* oldIns = &(cast<Instruction>(*oldVal));
                 if(owner->originalIns2NewIns.find(oldIns)!=owner->originalIns2NewIns.end())
@@ -90,8 +93,8 @@ namespace partGen{
 
                 return owner->originalConst2NewConst[oldConst];
 
-            }
-            return 0;
+            }*/
+            return owner->mapOldValue2NewValueInNewFunction(oldVal);
 
         }
 
@@ -180,19 +183,29 @@ namespace partGen{
             Instruction* rtIns = &(cast<Instruction>(*rtVal));
             return rtIns;
         }
-        BasicBlock* searchNewIncomingBlock(BasicBlock* originalPred)
-        {
-            // we wanna find the corresponding incoming BB for the originalPred
-            assert(owner->oldBB2newBBMapping.find(originalPred)!=owner->oldBB2newBBMapping.end()
-                    &&"incoming block was not kept");
-            return owner->oldBB2newBBMapping[originalPred];
-        }
+
 
         Instruction* generatePhiNode(IRBuilder<>& builder)
         {
             errs()<<"generate phi\n";
             PHINode* pInst = &(cast<PHINode>(*originalInsn));
             PHINode* nPhi = builder.CreatePHI(pInst->getType(),pInst->getNumIncomingValues());
+            owner->oldPhiNode.insert(pInst);
+            /*std::set<struct PhiInPair*>* allPairs =  new std::set<struct PhiInPair*>();
+            owner->phiTable[nPhi] = allPairs;
+
+            for(unsigned i =  0; i<pInst->getNumIncomingValues(); i++)
+            {
+                Value* curInValue = pInst->getIncomingValue(i);
+                BasicBlock* curInBlock = pInst->getIncomingBlock(i);
+                Value* newInValue = findValueInNewFunction(curInValue);
+                BasicBlock* newInBB = searchNewIncomingBlock(curInBlock);
+                struct PhiInPair* curPhiPair = new struct PhiInPair(newInBB,newInValue);
+                allPairs->insert(curPhiPair);
+            }*/
+
+            // if none of the incoming values
+            /*
             for(unsigned i =  0; i<pInst->getNumIncomingValues(); i++)
             {
                 Value* curInValue = pInst->getIncomingValue(i);
@@ -200,7 +213,7 @@ namespace partGen{
                 Value* newInValue = findValueInNewFunction(curInValue);
                 BasicBlock* newInBB = searchNewIncomingBlock(curInBlock);
                 nPhi->addIncoming(newInValue,newInBB);
-            }
+            }*/
             errs()<<"finish generate phi\n";
             return nPhi;
         }
@@ -262,7 +275,9 @@ namespace partGen{
         ConstantInt* generatePushRemoteBrConst(int val2Push)
         {
             assert(owner->originalVal2ArgVal.find(originalInsn)!=owner->originalVal2ArgVal.end()&&"can't find port to push br tag to");
-            IntegerType* dstNumType = cast<IntegerType>(owner->originalVal2ArgVal[originalInsn]->getType());
+            PointerType* ptType = &(cast<PointerType>(*(owner->originalVal2ArgVal[originalInsn]->getType())));
+            IntegerType* dstNumType = &(cast<IntegerType>(*(ptType->getPointerElementType())));
+            //IntegerType* dstNumType = cast<IntegerType>(owner->originalVal2ArgVal[originalInsn]->getType());
             ConstantInt* const2Push = ConstantInt::get(dstNumType,val2Push);
             return const2Push;
         }
@@ -287,9 +302,11 @@ namespace partGen{
 
         void generateNonReturnTerminator(IRBuilder<>& builder)
         {
+            errs()<<"into generate non return termintor\n";
             TerminatorInst* curTermInst = &(cast<TerminatorInst>(*originalInsn));
             if(remoteSrc)
             {
+
                 // load from the func arg
                 Value* receiverPtr = owner->originalVal2ArgVal[curTermInst];
                 Value* receivedDst = builder.CreateLoad(receiverPtr,true);
@@ -314,6 +331,7 @@ namespace partGen{
             }
             else
             {
+                errs()<<"make branch inst \n";
                 // now we do a select for the things to send, and send them before we branch
                 if(isa<BranchInst>(*originalInsn))
                 {
@@ -325,11 +343,14 @@ namespace partGen{
                     assert(newBrCond!=0 && "no corresponding condition found");
                     if(remoteDst)
                     {
+                        errs()<<"generate branch number to push\n";
                         ConstantInt* const2Push0 = generatePushRemoteBrConst(0);
                         ConstantInt* const2Push1 = generatePushRemoteBrConst(1);
                         Value* selCreated = builder.CreateSelect(newBrCond,const2Push0,const2Push1);
                         Value* ptrVal = owner->originalVal2ArgVal[originalInsn];
                         builder.CreateStore(selCreated,ptrVal,true);
+
+                        errs()<<"finish generate branch number store\n";
                     }
                     BasicBlock* oldIfTrue = curBranch->getSuccessor(0);
                     BasicBlock* oldIfFalse = curBranch->getSuccessor(1);
@@ -427,7 +448,7 @@ namespace partGen{
 
         void generateStatement(IRBuilder<>& builder)
         {
-            errs()<<"ready to generate new statement for original ins "<<*originalInsn;
+            errs()<<"ready to generate new statement for original ins "<<*originalInsn<<"\n";
             if(originalInsn->isTerminator())
             {
                 if(!isa<ReturnInst>(*originalInsn))
@@ -456,11 +477,15 @@ namespace partGen{
                 else
                 {
                     // locally generated, let's ensure all the values have been generated -- if they are instructions
-                    // in some other function
-                    for(unsigned int operandInd = 0; operandInd < originalInsn->getNumOperands(); operandInd++)
+                    // in some other function, then they would have been here through srcInstructions, of course
+                    // PhiNode is exempted
+                    if(!isa<PHINode>(*originalInsn))
                     {
-                        Value* curOperand = originalInsn->getOperand(operandInd);
-                        assert(0!=findValueInNewFunction(curOperand)  && "cannot find value in new function");
+                        for(unsigned int operandInd = 0; operandInd < originalInsn->getNumOperands(); operandInd++)
+                        {
+                            Value* curOperand = originalInsn->getOperand(operandInd);
+                            assert(0!=findValueInNewFunction(curOperand)  && "cannot find value in new function");
+                        }
                     }
                     Instruction* newlyGeneratedIns=0;
                     if(originalInsn->isBinaryOp())

@@ -165,7 +165,7 @@ public:
 
   // CallGraphNode ctor - Create a node for the specified function.
   inline InstructionGraphNode(Instruction *f) : I(f) {}
-  ~InstructionGraphNode() { }
+  ~InstructionGraphNode() {DependentInstructions.clear(); }
 
   //===---------------------------------------------------------------------
   // Accessor methods.

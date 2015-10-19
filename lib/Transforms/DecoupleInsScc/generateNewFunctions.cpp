@@ -32,9 +32,17 @@ namespace partGen{
         // let's go through all the things we need to make function signature
         Type* rtType;
         if(retInstPtr==0)
+        {
+            errs()<<"no return\n";
             rtType = Type::getVoidTy(context);
+        }
         else
-            rtType = retInstPtr->getType();
+        {
+            errs()<<*retInstPtr<<"\n";
+            ReturnInst* curReturnInst = &(cast<ReturnInst>(*retInstPtr));
+            rtType = curReturnInst->getReturnValue()->getType();
+
+        }
         // the arrayRef for constructing the param list
         std::vector<Type*> paramsType;
         std::vector<Value*> originalVal;
@@ -59,6 +67,7 @@ namespace partGen{
             vCountSuf++;
         }
         errs()<<"generate function signature: "<<partFuncName<<"\n";
+        newFuncType->dump();
         Constant* tmpFuncC = topModule->getOrInsertFunction(partFuncName, newFuncType);
         Function* actualNewFunc = cast<Function>(tmpFuncC);
 
@@ -89,6 +98,7 @@ namespace partGen{
                 if(srcInstruction.count(oldIns))
                 {
                     newArgName=newArgName+"_rd";
+                    errs()<<*oldIns<<"\n";
                     assert(ins2AllocatedChannel.find(oldIns)!=ins2AllocatedChannel.end()
                             &&"partition does not see allocated channel");
                     argList->push_back(ins2AllocatedChannel[oldIns]);
@@ -103,7 +113,10 @@ namespace partGen{
                     assert(isa<PointerType>(*(funcArgVal->getType())) && "non pointer type used for passing val");
                     PointerType* curType = &(cast<PointerType>(*(funcArgVal->getType())));
                     Type* eleType = curType->getPointerElementType();
-                    AllocaInst* allocaEle = new AllocaInst(eleType);
+                    AllocaInst* allocaEle= this->part->top->newReplacementBBBuilder->CreateAlloca(eleType);
+                    //AllocaInst* allocaEle = new AllocaInst(eleType,"myAlloca",this->part->top->newSingleBB);
+                    errs()<<"outgoing channel gen "<<*oldIns<<"\n";
+                    errs()<<"we get "<<*allocaEle<<"\n";
                     ins2AllocatedChannel[oldIns]=allocaEle;
                     argList->push_back(allocaEle);
                 }
@@ -163,7 +176,14 @@ namespace partGen{
                 if(iAmSender)
                 {
                     if(part->receiverPartitionsExist(insPt))
+                    {
                         instToSend.insert(insPt);
+                        errs()<<"inst to send: "<<*insPt<<"\n";
+                    }
+                    else
+                    {
+                        errs()<<"nobody to receive "<<*insPt<<"\n";
+                    }
                 }
                 // if we are using function argument, we need to add that too
                 // iterate through insPt's operand
@@ -184,9 +204,11 @@ namespace partGen{
                                        std::set<Instruction*>& instToSend,
                                        ReturnInst*& returnInst)
     {
+        errs()<<"collect partition funcArg\n";
         for(auto bbIter = part->AllBBs.begin(); bbIter!= part->AllBBs.end(); bbIter++)
         {
             BasicBlock* curBB = *bbIter;
+            errs()<<"check curBB with term "<<*(curBB->getTerminator())<<"\n";
             collectPartitionFuncArgPerBB(topFuncArg,srcInstruction,instToSend,curBB);
             if(part->insBBs.find(curBB)!=part->insBBs.end())
             {
@@ -383,41 +405,45 @@ namespace partGen{
         errs()<<"ready to generate instruction:"<<*originalIns<<"\n";
         if(originalIns2NewIns.find(originalIns)==originalIns2NewIns.end())
         {
+            errs()<<"actually generate\n";
             BasicBlock* originalParentBB = originalIns->getParent();
             BasicBlock* newFuncBBEquiv = oldBB2newBBMapping[originalParentBB];
             IRBuilder<> builder(newFuncBBEquiv);
-            // find the operand
-            unsigned numOperands = originalIns->getNumOperands();
-            for(unsigned numOperandInd = 0; numOperandInd < numOperands; numOperandInd++)
+            // if this is not Phi, then we can go generate all the operand recursively,
+            // for phi, we can just wait for everybody to be generated and then populate
+            if(!isa<PHINode>(*originalIns))
             {
-                Value* curOperand = originalIns->getOperand(numOperandInd);
-                if(isa<Instruction>(*curOperand))
+                unsigned numOperands = originalIns->getNumOperands();
+                for(unsigned numOperandInd = 0; numOperandInd < numOperands; numOperandInd++)
                 {
-                    Instruction* originalOperandIns = &(cast<Instruction>(*curOperand));
-                    assert(!isa<TerminatorInst>(*originalOperandIns) && "Operand is a terminator");
-                    // if this instruction is an actual instruction in this partition
-                    // then we generate
-                    BasicBlock* originalOperandBB = originalOperandIns->getParent();
-                    if(part->insBBs.find(originalOperandBB)!=part->insBBs.end() &&
-                      part->insBBs[originalOperandBB]->count(originalOperandIns))
+                    Value* curOperand = originalIns->getOperand(numOperandInd);
+                    if(isa<Instruction>(*curOperand))
                     {
-                        if(!isa<PHINode>(*originalOperandIns))
+                        Instruction* originalOperandIns = &(cast<Instruction>(*curOperand));
+                        assert(!isa<TerminatorInst>(*originalOperandIns) && "Operand is a terminator");
+                        // if this instruction is an actual instruction in this partition
+                        // then we generate
+                        BasicBlock* originalOperandBB = originalOperandIns->getParent();
+                        if(part->insBBs.find(originalOperandBB)!=part->insBBs.end() &&
+                          part->insBBs[originalOperandBB]->count(originalOperandIns))
                         {
                             generateActualInstruction(originalOperandIns);
+
+                        }
+                        else // this must be a source instruction -- we must have already generated it
+                        {
+                            assert(originalIns2NewIns.find(originalOperandIns)!=originalIns2NewIns.end() &&
+                                    "source instruction not yet genereated!");
                         }
                     }
-                    else // this must be a source instruction -- we must have already generated it
+                    else if(isa<Argument>(*curOperand))
                     {
-                        assert(originalIns2NewIns.find(originalOperandIns)!=originalIns2NewIns.end() &&
-                                "source instruction not yet genereated!");
+                        assert(originalVal2ArgVal.find(curOperand)!=originalVal2ArgVal.end() &&
+                                "argument not present in current function");
                     }
                 }
-                else if(isa<Argument>(*curOperand))
-                {
-                    assert(originalVal2ArgVal.find(curOperand)!=originalVal2ArgVal.end() &&
-                            "argument not present in current function");
-                }
             }
+
             // now all the instruction of the operand I need to use are already generated
             // so other type of operand can be dealt with locally, so lets do the actual generation
             bool thereIsPartitionReceiving = false;
@@ -452,8 +478,64 @@ namespace partGen{
             }
         }
     }
+    Value* DppFunctionGenerator::mapOldValue2NewValueInNewFunction(Value* oldVal)
+    {
+        if(isa<Instruction>(*oldVal))
+        {
+            Instruction* oldIns = &(cast<Instruction>(*oldVal));
+            if(originalIns2NewIns.find(oldIns)!=originalIns2NewIns.end())
+                return originalIns2NewIns[oldIns];
 
+        }
+        else if(isa<Argument>(*oldVal))
+        {
+            if(originalVal2ArgVal.find(oldVal)!=originalVal2ArgVal.end())
+                return originalVal2ArgVal[oldVal];
 
+        }
+        else if(isa<Constant>(*oldVal))
+        {
+            Constant* oldConst = &(cast<Constant>(*oldVal));
+            if(originalConst2NewConst.find(oldConst)==originalConst2NewConst.end())
+                // make a new constant? just return the old one
+                originalConst2NewConst[oldConst] = oldConst;
+
+            return originalConst2NewConst[oldConst];
+
+        }
+        return 0;
+
+    }
+
+    BasicBlock* DppFunctionGenerator::searchNewIncomingBlock(BasicBlock* originalPred)
+    {
+        // we wanna find the corresponding incoming BB for the originalPred
+        assert(oldBB2newBBMapping.find(originalPred)!=oldBB2newBBMapping.end()
+                &&"incoming block was not kept");
+        return oldBB2newBBMapping[originalPred];
+    }
+
+    void DppFunctionGenerator::completePhiNodes()
+    {
+        // we go in
+        for(auto phiIter = oldPhiNode.begin(); phiIter!= oldPhiNode.end();
+            phiIter++)
+        {
+            PHINode* originalPhiNode = *phiIter;
+            Value* newVal = mapOldValue2NewValueInNewFunction(originalPhiNode);
+            assert( newVal && "Can't find newly created phiNode\n"  );
+            PHINode* newPhiNode = &(cast<PHINode>(*newVal));
+            for(unsigned i =  0; i<originalPhiNode->getNumIncomingValues(); i++)
+            {
+                Value* oldInValue = originalPhiNode->getIncomingValue(i);
+                BasicBlock* oldInBlock = originalPhiNode->getIncomingBlock(i);
+                Value* newInValue = mapOldValue2NewValueInNewFunction(oldInValue);
+                BasicBlock* newInBB = searchNewIncomingBlock(oldInBlock);
+                newPhiNode->addIncoming(newInValue,newInBB);
+            }
+        }
+        oldPhiNode.clear();
+    }
 
 
     Function* DppFunctionGenerator::generateFunction(int seqNum,
@@ -464,6 +546,7 @@ namespace partGen{
         std::set<Instruction*> srcInstFromOtherPart;
         std::set<Instruction*> instToOtherPart;
         ReturnInst* retInstPtr = 0;
+        //FIXME: need to make sure branchtags are added into src and inst to send
         collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart, retInstPtr);
 
         addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart,retInstPtr,seqNum,
@@ -530,7 +613,10 @@ namespace partGen{
             }
         }
         errs()<<"finished performing reordering of instructions in new function bbs\n";
-        // done reordering
+        // done reordering, now we go through every PhiNode in the new function
+        // and populate their incoming edge
+        completePhiNodes();
+
         return addedFunction;
 
     }

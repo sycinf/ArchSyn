@@ -29,6 +29,8 @@ namespace partGen{
     struct DecoupleInsScc : public FunctionPass {
         static char ID; // Pass identification, replacement for typeid
         Function* targetFunc;
+        //BasicBlock* newSingleBB;
+        IRBuilder<>* newReplacementBBBuilder;
         bool controlFlowDuplication;
         std::vector<DAGNode*> collectedDagNode;
         std::vector<DAGPartition*> collectedPartition;
@@ -41,7 +43,7 @@ namespace partGen{
         bool runOnFunction(Function &F) override;
         void checkAcyclicDependency();
         bool DFSFindPartitionCycle(DAGPartition* dp);
-        virtual void getAnalysisUsage(AnalysisUsage &AU) const;
+        virtual void getAnalysisUsage(AnalysisUsage &AU) const override;
         std::vector<DAGPartition*>* getPartitionFromIns(Instruction* ins);
     };
 
@@ -54,6 +56,7 @@ namespace partGen{
         bool expensive;
         bool covered;
         int seqNum;
+        ~DAGNode();
         void init();
         void print();
     };
@@ -108,6 +111,7 @@ namespace partGen{
         bool needBranchTag(BasicBlock* curBB);
         bool hasActualInstruction(Instruction* target);
         bool receiverPartitionsExist(Instruction* insPt);
+        void setupBBStructure();
         Function* generateDecoupledFunction(int seqNum,
                                             std::map<Instruction*,Value*>& ins2Channel,
                                             std::vector<Value*>* argList);

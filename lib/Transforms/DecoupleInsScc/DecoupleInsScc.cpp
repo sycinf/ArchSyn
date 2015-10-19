@@ -26,6 +26,8 @@
 #include "generatePartitionsUtil.h"
 #include "generatePartitions.h"
 #include "generateNewFunctions.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+
 #include <boost/lexical_cast.hpp>
 #include <math.h>
 #include <algorithm>
@@ -40,6 +42,15 @@ namespace boost{
 }
 
 namespace partGen {
+        DAGNode::~DAGNode()
+        {
+            /*for(auto nodeIter = dagNodeContent.begin();nodeIter!=dagNodeContent.end(); nodeIter++)
+            {
+                InstructionGraphNode* curIGNPtr = *nodeIter;
+                delete curIGNPtr;
+            }*/
+            dagNodeContent.clear();
+        }
 
         void DAGNode::init()
         {
@@ -503,6 +514,7 @@ namespace partGen {
         {
             if(insPt->isTerminator()&& !isa<ReturnInst>(*insPt))
             {
+                errs()<<"checking if "<<*insPt<<" has receiver partition\n";
                 // are there other partitions having the same basicblock
                 // we will need to pass the branch tag over as long as it is
                 // the case
@@ -513,6 +525,8 @@ namespace partGen {
                     {
                         if(destPart->AllBBs.count(insPt->getParent()) && destPart->needBranchTag(insPt->getParent()))
                             return true;
+                        errs()<<"partition "<<sid<<":";
+                        errs()<<"end up no need to receive "<<destPart->AllBBs.count(insPt->getParent())<<" is count parent\n";
                     }
                 }
             }
@@ -535,9 +549,7 @@ namespace partGen {
             }
             return false;
         }
-        Function* DAGPartition::generateDecoupledFunction(int seqNum,
-                                                          std::map<Instruction*,Value*>& ins2AllocatedChannel,
-                                                          std::vector<Value*>* argList)
+        void DAGPartition::setupBBStructure()
         {
             // we collect all the basic blocks
             // and remove what ever redundant BasicBlocks
@@ -559,13 +571,20 @@ namespace partGen {
                                                inside a loop, shouldn't happen when control flow is \
                                                 is duplicated\n");
 
+        }
+
+        Function* DAGPartition::generateDecoupledFunction(int seqNum,
+                                                          std::map<Instruction*,Value*>& ins2AllocatedChannel,
+                                                          std::vector<Value*>* argList
+                                                          )
+        {
+
             /**** end of check ************/
             struct DppFunctionGenerator dpg(this);
             return dpg.generateFunction(seqNum,ins2AllocatedChannel,argList);
 
 
         }
-
 
 
 
@@ -889,11 +908,30 @@ namespace partGen {
                 // to a allocaed data structure
                 // we ll have a map of instruction --> vector of pointers (the first one being the producer)
                 std::vector<Value*>* curFuncArgList = new std::vector<Value*>();
+                // we will need to generate all the BBs for all the partitions
+                // before we generate function for all of them, in case things get added
+                curPartition->setupBBStructure();
+
+                //Function* generatedFunc = curPartition->generateDecoupledFunction(k,ins2AllocatedChannel,curFuncArgList);
+                //generatedFunctions.push_back(generatedFunc);
+                //ins2ArgList[generatedFunc] = curFuncArgList;
+
+            }
+            BasicBlock* newSingleBB = BasicBlock::Create(this->targetFunc->getContext(),"newStreamTypeBB",this->targetFunc);
+
+            newReplacementBBBuilder = new IRBuilder<>(newSingleBB);
+
+            for(unsigned k = 0; k<collectedPartition.size(); k++)
+            {
+                DAGPartition* curPartition = collectedPartition.at(k);
+                std::vector<Value*>* curFuncArgList = new std::vector<Value*>();
                 Function* generatedFunc = curPartition->generateDecoupledFunction(k,ins2AllocatedChannel,curFuncArgList);
                 generatedFunctions.push_back(generatedFunc);
                 ins2ArgList[generatedFunc] = curFuncArgList;
 
             }
+
+
             //FIXME: the data structure for passing things around
             // need to be alloca'ed -- we first need to know
             // what are being passed around, this should be retrieved when we are creating functions
@@ -911,25 +949,59 @@ namespace partGen {
             // let's just delete what ever BB we originally have
             // and replace them with a straight line bb calling
             // each function in succession
-            BasicBlock* newSingleBB = BasicBlock::Create(this->targetFunc->getContext(),"newStreamTypeBB",this->targetFunc);
             // do the alloca
             for(auto allocaIter = ins2AllocatedChannel.begin(); allocaIter!=ins2AllocatedChannel.end(); allocaIter++)
             {
                 Value* actualAlloca = allocaIter->second;
                 AllocaInst* curAllocaInst = &(cast<AllocaInst>(*actualAlloca));
-                curAllocaInst->insertBefore(newSingleBB->begin());
+                errs()<<"insert "<<*curAllocaInst<<"\n";
+                //curAllocaInst->insertBefore(newSingleBB->begin());
             }
+            errs()<<"done inserting alloca insts\n";
 
+            unsigned correspondingPartitionInd = 0;
+            CallInst* topReturn=0;
             for(auto funcPtrIter = generatedFunctions.begin(); funcPtrIter!=generatedFunctions.end(); funcPtrIter++)
             {
                 std::vector<Value*>* curFuncArgList = ins2ArgList[*funcPtrIter];
                 ArrayRef<Value*> argsVal(*curFuncArgList);
-                CallInst::Create(*funcPtrIter,argsVal,(*funcPtrIter)->getName(),newSingleBB->end());
+                errs()<<(*funcPtrIter)->getName()<<" function has been generated, now add callsite\n";
+                CallInst* potentialRet = newReplacementBBBuilder->CreateCall(*funcPtrIter,argsVal);
+                //CallInst::Create(*funcPtrIter,argsVal,(*funcPtrIter)->getName(),newSingleBB->end());
                 delete curFuncArgList;
+                if(collectedPartition.at(correspondingPartitionInd)->rInsn)
+                {
+                    errs()<<"function has return "<<(*funcPtrIter)->getName()<<"\n";
+                    topReturn = potentialRet;
+                }
+                correspondingPartitionInd++;
             }
+            errs()<<"adding return statement\n";
+            if(topReturn ==0 ||topReturn->getType()->isVoidTy())
+                newReplacementBBBuilder->CreateRetVoid();
+            else
+                newReplacementBBBuilder->CreateRet(topReturn);
+            errs()<<"begin to remove all original BB\n";
             // final part, remove all the original BB
+            if(change)
+            {
+                std::vector<BasicBlock*> toDelete;
+                for(auto bbIter = targetFunc->begin(); bbIter!= targetFunc->end(); bbIter++)
+                {
+                    BasicBlock* curBB = &(cast<BasicBlock>(*bbIter));
+                    if(curBB!=newSingleBB)
+                        toDelete.push_back(curBB);
+                }
+                for(auto bbPtrIter = toDelete.begin(); bbPtrIter!=toDelete.end(); bbPtrIter++)
+                {
 
-
+                    BasicBlock* toBeDeleted = *bbPtrIter;
+                    errs()<<"to delete "<<toBeDeleted->getName()<<"\n";
+                    //toBeDeleted->removeFromParent();;
+                    errs()<<"not deleting \n";
+                }
+                targetFunc->addFnAttr("transformed","true");
+            }
         }
         // clear up
         dagNodeMap.clear();
@@ -944,14 +1016,62 @@ namespace partGen {
         {
             delete collectedDagNode.at(k);
         }
+        getAnalysis<InstructionGraph>().releaseMemory();
+        errs()<<"done main pass\n";
+
+        BasicBlock* newlyAdded = newReplacementBBBuilder->GetInsertBlock();
+        Function* curFunc = targetFunc;
+        if(curFunc->hasFnAttribute("transformed"))
+        {
+            std::vector<BasicBlock*> DeadBlocks;
+            for (Function::iterator I = targetFunc->begin(), E = targetFunc->end(); I != E; ++I)
+            {
+                BasicBlock* curBB = &(cast<BasicBlock>(*I));
+                errs()<<curBB->getName()<<" is being processed\n";
+                if(curBB == newlyAdded)
+                {
+                    errs()<<"no pred bb"<<curBB->getName()<<"\n";
+                    errs()<<"do not touch\n";
+                }
+                else
+                {
+                    DeadBlocks.push_back(curBB);
+
+                    /*while (PHINode *PN = dyn_cast<PHINode>(curBB->begin())) {
+                      PN->replaceAllUsesWith(Constant::getNullValue(PN->getType()));
+                      PN->dropAllReferences();
+                      curBB->getInstList().pop_front();
+                    }*/
+                    //for (succ_iterator SI = succ_begin(curBB), E = succ_end(curBB); SI != E; ++SI)
+                    //    (*SI)->removePredecessor(curBB);
+                    for (BasicBlock::iterator II = curBB->begin(); II != curBB->end(); ++II) {
+                        if(PHINode* PN = dyn_cast<PHINode>(II))
+                            PN->replaceAllUsesWith(Constant::getNullValue(PN->getType()));
+                        Instruction * insII = &(*II);
+                        insII->dropAllReferences();
+                    }
+
+                    curBB->dropAllReferences();
+                }
+            }
+
+            // Actually remove the blocks now.
+            for (unsigned i = 0, e = DeadBlocks.size(); i != e; ++i) {
+                errs()<<"erase "<<DeadBlocks[i]->getName()<<"\n";
+                DeadBlocks[i]->eraseFromParent();
+
+            }
+        }
+
+
         return change;
     }
     void DecoupleInsScc::getAnalysisUsage(AnalysisUsage &AU) const {
-        AU.addRequiredTransitive<InstructionGraph>();
-        AU.addRequiredTransitive<DominatorTreeWrapperPass>();
+        AU.addRequired<InstructionGraph>();
+        AU.addRequired<DominatorTreeWrapperPass>();
         AU.addRequired<PostDominatorTree>();
         AU.addRequired<LoopInfo>();
-        AU.setPreservesAll();
+        //AU.setPreservesAll();
     }
     std::vector<DAGPartition*>* DecoupleInsScc::getPartitionFromIns(Instruction* ins)
     {
