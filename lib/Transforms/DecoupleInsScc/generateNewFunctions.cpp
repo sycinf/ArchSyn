@@ -72,23 +72,36 @@ namespace partGen{
         Function* actualNewFunc = cast<Function>(tmpFuncC);
 
         // populate the old value to new arg mapping
+
+        unsigned attrInd = 1;
         auto  argValIter = actualNewFunc->arg_begin();
         for(auto oldValIter = originalVal.begin();
             oldValIter!=originalVal.end();
-            oldValIter++, argValIter++)
+            oldValIter++, argValIter++, attrInd++)
         {
             Value* oldVal = *oldValIter;
             originalVal2ArgVal[oldVal] = argValIter;
             Value* curArg = argValIter;
+
+            Argument* curFuncArg = &(cast<Argument>(*curArg));
+            /*AttributeSet allAttribute = actualNewFunc->getAttributes();
+            allAttribute.addAttribute(actualNewFunc->getContext(),attrInd,CHANNELATTR,"true");
+            curFuncArg->addAttr(curParamAttr);
+            */
+            AttrBuilder B;
+
             // name every argument the same as the original args name
             if(isa<Argument>(*oldVal))
             {
                 curArg->setName(oldVal->getName());
                 argList->push_back(oldVal);
+                B.addAttribute(NORMALARGATTR);
+
             }
             else
             {
                 assert(isa<Instruction>(*oldVal) && "neither func arg nor instruction");
+                B.addAttribute(CHANNELATTR);
                 Instruction* oldIns = &(cast<Instruction>(*oldVal));
                 BasicBlock* oldInsBB = oldIns->getParent();
                 std::string newArgName = oldInsBB->getName();
@@ -122,9 +135,11 @@ namespace partGen{
                 }
                 curArg->setName(newArgName);
             }
+            curFuncArg->addAttr(AttributeSet::get(actualNewFunc->getContext(), curFuncArg->getArgNo() + 1, B));
+
         }
         errs()<<"finished populate function argument list\n";
-        actualNewFunc->addFnAttr("dppcreated","true");
+        actualNewFunc->addFnAttr(GENERATEDATTR,"true");
         return actualNewFunc;
     }
 
@@ -245,6 +260,7 @@ namespace partGen{
 
     void DppFunctionGenerator::createNewFunctionBBs(bool haveReturnInst)
     {
+        errs()<<"create BBs for new function "<<addedFunction->getName()<<"\n";
         std::set<BasicBlock*> outsideBBs;
         // create dominator
         createNewBBFromOldBB(part->dominator,outsideBBs);
@@ -263,14 +279,14 @@ namespace partGen{
             // all these outsideBbs will be maped to extraEndBlock
             for(auto iter = outsideBBs.begin(); iter!=outsideBBs.end(); iter++)
                 oldBB2newBBMapping[*iter]=extraEndBlock;
-
         }
-
+        errs()<<"finished processing outsideBBs\n";
         LoopInfo* li = part->top->getAnalysisIfAvailable<LoopInfo>();
         if(!part->top->controlFlowDuplication && li->getLoopDepth(part->dominator)!=0 && extraEndBlock)
         {
             // the extra end will always loop back to the dominator when there is a while
             // in this case the llvm function doesnt have a return statement
+            errs()<<"loopback\n";
             IRBuilder<> builder(extraEndBlock);
             builder.CreateBr(oldBB2newBBMapping[part->dominator]);
         }
@@ -310,6 +326,7 @@ namespace partGen{
             }
 
         }
+        errs()<<"done creating BB for new function\n";
     }
     void DppFunctionGenerator::populateFlowOnlyBB(BasicBlock* curBB)
     {
@@ -604,10 +621,9 @@ namespace partGen{
                         if(lastInserted!=0)
                             newIns->insertAfter(lastInserted);
                         else
-                        {
                             newIns->insertBefore(bbInNewFunction->begin());
-                            lastInserted = newIns;
-                        }
+                        lastInserted = newIns;
+
                     }
                 }
             }

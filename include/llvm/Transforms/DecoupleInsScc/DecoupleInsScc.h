@@ -7,6 +7,10 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "decoupleInsSCC"
+#define TRANSFORMEDATTR "dpp-transformed"
+#define GENERATEDATTR "dpp-generated"
+#define CHANNELATTR "dpp-channel"
+#define NORMALARGATTR "dpp-normalArg"
 namespace llvm{
     FunctionPass* createDecoupleInsSccPass(bool cfDup);
 

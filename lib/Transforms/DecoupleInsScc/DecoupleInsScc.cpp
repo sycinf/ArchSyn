@@ -189,6 +189,13 @@ namespace partGen {
             // add the path from the dominator to all the sourceBBs
             addPathBBsToBBMap(sourceBBs,dominator,AllBBs,dominator);
             addPathBBsToBBMap(insBBs,dominator,AllBBs,dominator);
+
+errs()<<"\t\t\t\t\t\tafter addPathBBsToBBMap : \n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
+                errs()<<(*(bbIter))->getName()<<"\n";
+
+
+
             // now  we do the n^2 check to see if anybody goes to anybody else?
             for(auto bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
             {
@@ -215,20 +222,39 @@ namespace partGen {
                 std::set<Instruction*>* curBBInsns = bmi->second;
                 addPhiOwner2Vector(curBBInsns, AllBBs);
             }
+errs()<<"\t\t\t\t\t\tafter addPhiOwner : \n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
+                errs()<<(*(bbIter))->getName()<<"\n";
+
+
             // a special pass to search for every insBB and srcBB themselves
+
             for(auto bmi = insBBs.begin(), bme = insBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
-                // search all its successor
-                addPathToSelf(curBB,AllBBs,dominator);
+                // search all its successor, this is to accommodate
+                // the case where a block can branch to outside blocks
+                // then come back to itself without passing through
+                // dominator, if we do not take into consideration these
+                // path, then the control flow doesnt have anywhere to go
+                if(curBB!= dominator)
+                    addPathToSelf(curBB,AllBBs,dominator);
             }
             for(auto bmi = sourceBBs.begin(), bme = sourceBBs.end(); bmi!=bme; ++bmi)
             {
                 BasicBlock* curBB=bmi->first;
-                addPathToSelf(curBB,AllBBs,dominator);
+                if(curBB!= dominator)
+                    addPathToSelf(curBB,AllBBs,dominator);
             }
+errs()<<"\t\t\t\t\t\tafter add2Self : \n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
+                errs()<<(*(bbIter))->getName()<<"\n";
+
+
             // make sure everybody's predecessor is either dominator or part of AllBBs
             // if they are not, add it in, and update the dominator,and add the path in
+            // this is so that there is only one dominator -- of course, if somebody itself
+            // is dominator, we dont need to look at its predecessor
             BB2BBVectorMapTy* predMap = top->getAnalysis<InstructionGraph>().getPredecessorMap();
             std::set<BasicBlock*> added=AllBBs;
             bool initial = true;
@@ -238,7 +264,15 @@ namespace partGen {
                     AllBBs.insert(added.begin(),added.end());
                 // now set dominators to be common dominator of the added ones and
                 // the original dominator
+
+                BasicBlock* originalDominator = dominator;
                 dominator = findDominator(dominator,added,DT);
+                if(originalDominator!=dominator)
+                {
+                    // we have had an update of dominator, the original dominator
+                    // should have its predecessor looked at
+                    added.insert(originalDominator);
+                }
 
                 initial=false;
                 std::set<BasicBlock*> lastAdded = added;
@@ -246,6 +280,8 @@ namespace partGen {
                 for(auto curAddedIter = lastAdded.begin(); curAddedIter!=lastAdded.end(); curAddedIter++)
                 {
                     BasicBlock* curAddedBB = *curAddedIter;
+                    if(curAddedBB == dominator)
+                        continue;
                     if(predMap->find(curAddedBB)!=predMap->end())
                     {
                         std::vector<BasicBlock*>* curBBPreds = (*predMap)[curAddedBB];
@@ -260,6 +296,9 @@ namespace partGen {
                     }
                 }
             }
+errs()<<"\t\t\t\t\t\tafter adding predecesor block : \n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
+                errs()<<(*(bbIter))->getName()<<"\n";
 
 
             LoopInfo* li =top->getAnalysisIfAvailable<LoopInfo>();
@@ -553,7 +592,16 @@ namespace partGen {
         {
             // we collect all the basic blocks
             // and remove what ever redundant BasicBlocks
+errs()<<"\t\t\t\t\t\tinitial BB List : \n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
+                errs()<<(*(bbIter))->getName()<<"\n";
+
             generateBBList();
+
+
+errs()<<"\t\t\t\t\t\t after generate BB List : \n";
+            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
+                errs()<<(*(bbIter))->getName()<<"\n";
             trimBBList();
             /**** some check to run to ensure the cfg is properly formed***/
             checkDominator();
@@ -770,7 +818,7 @@ namespace partGen {
 
     bool DecoupleInsScc::runOnFunction(Function &F)
     {
-        if(F.hasFnAttribute("dppcreated"))
+        if(F.hasFnAttribute(GENERATEDATTR))
             return false;
         errs() << "Try to decouple function: ";
         errs().write_escaped(F.getName()) << '\n';
@@ -1000,7 +1048,7 @@ namespace partGen {
                     //toBeDeleted->removeFromParent();;
                     errs()<<"not deleting \n";
                 }
-                targetFunc->addFnAttr("transformed","true");
+                targetFunc->addFnAttr(TRANSFORMEDATTR,"true");
             }
         }
         // clear up
@@ -1021,7 +1069,7 @@ namespace partGen {
 
         BasicBlock* newlyAdded = newReplacementBBBuilder->GetInsertBlock();
         Function* curFunc = targetFunc;
-        if(curFunc->hasFnAttribute("transformed"))
+        if(curFunc->hasFnAttribute(TRANSFORMEDATTR))
         {
             std::vector<BasicBlock*> DeadBlocks;
             for (Function::iterator I = targetFunc->begin(), E = targetFunc->end(); I != E; ++I)

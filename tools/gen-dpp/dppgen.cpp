@@ -33,6 +33,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
+#include "llvm/Transforms/GenSynthC/GenSynthC.h"
 #include <algorithm>
 #include <memory>
 using namespace llvm;
@@ -43,13 +44,16 @@ InputFilename(cl::Positional, cl::desc("<input bitcode file>"),
     cl::init("-"), cl::value_desc("filename"));
 
 static cl::opt<std::string>
-OutputFilename("o", cl::desc("Override output filename"),
+OutputFilename("o", cl::desc("Override output filename-transformed llvm IR"),
                cl::value_desc("filename"));
 
 static cl::opt<std::string>
 OutputFIFOFilename("fdes", cl::desc("FIFO connection description"),
                cl::value_desc("filename"));
 
+static cl::opt<std::string>
+OutputCFileName("ocfile", cl::desc("A C++ file genereated for HLS"),
+                cl::value_desc("filename"));
 
 static cl::opt<bool>
 NoControlFlowDup("disable-cf-dup",
@@ -127,22 +131,28 @@ int main(int argc, char **argv) {
       errs() << EC.message() << '\n';
       return 1;
     }
+
+
   }
 
 
 
   // a separate stream
   std::unique_ptr<tool_output_file>  fdesOut;
-
+  std::unique_ptr<tool_output_file> OutC;
   // do the samething for FIFO description
   if (NoOutput) {
     if (!OutputFIFOFilename.empty())
       errs() << "WARNING: The -fdes (fifo des filename) option is ignored when\n"
                 "the --disable-output option is used.\n";
+    if(!OutputCFileName.empty())
+      errs() << "WARNING: The -ocfile (synthesiziable c filename) option is ignored when\n"
+                  "the --disable-output option is used.\n";
+
   } else {
     // Default to standard output.
     if (OutputFIFOFilename.empty())
-      OutputFilename = "-";
+      OutputFIFOFilename = "-";
 
     std::error_code EC;
     fdesOut.reset(new tool_output_file(OutputFilename, EC, sys::fs::F_None));
@@ -150,6 +160,20 @@ int main(int argc, char **argv) {
       errs() << EC.message() << '\n';
       return 1;
     }
+
+
+    if(!OutputCFileName.empty())
+    {
+        std::error_code EC_c;
+        OutC.reset(new tool_output_file(OutputCFileName, EC_c, sys::fs::F_None));
+        if (EC_c) {
+          errs() << EC_c.message() << '\n';
+          return 1;
+        }
+    }
+
+
+
   }
 
 
@@ -164,7 +188,11 @@ int main(int argc, char **argv) {
   Passes.add(llvm::createDecoupleInsSccPass(!NoControlFlowDup));
 
   Passes.add(createPrintModulePass(Out->os()));
-
+  if(!OutputCFileName.empty())
+  {
+    errs()<<"added cprint pass\n";
+    Passes.add(llvm::createGenSynthCPass(OutC->os()));
+  }
 
   //PartitionGen* pg = new PartitionGen(Out->os(),fdesOut->os(),NoControlFlowDup,GenerateCPUMode);
 
@@ -200,6 +228,7 @@ int main(int argc, char **argv) {
   {
     Out->keep();
     fdesOut->keep();
+    OutC->keep();
   }
   return 0;
 }
