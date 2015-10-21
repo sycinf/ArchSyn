@@ -1,15 +1,14 @@
-# If we don't need RTTI or EH, there's no reason to export anything
-# from the hello plugin.
-if( NOT LLVM_REQUIRES_RTTI )
-  if( NOT LLVM_REQUIRES_EH )
-    set(LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/GenSynthC.exports)
-  endif()
-endif()
+set(Boost_ADDITIONAL_VERSIONS "1.49" "1.49.0" "1.50" "1.50.0")
 
-if(WIN32 OR CYGWIN)
-  set(LLVM_LINK_COMPONENTS Core Support)
+find_package( Boost  REQUIRED)
+if(Boost_FOUND)
+    include_directories(${Boost_INCLUDE_DIR})
 endif()
+message("boost: ${Boost_INCLUDE_DIRS}")
 
-add_llvm_loadable_module( LLVMGenSynthC
+add_llvm_library( LLVMGenSynthC
   GenSynthC.cpp
+  GenCFunc.h
+  GenCFuncUtil.h
+  GenCInsn.h
   )
