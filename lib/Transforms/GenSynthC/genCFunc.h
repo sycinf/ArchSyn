@@ -14,14 +14,17 @@
 #include "GenCFuncUtil.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
 #include "GenCInsn.h"
+#include <boost/lexical_cast.hpp>
 #include <iterator>
 using namespace llvm;
 using namespace std;
 namespace GenCFunc {
     class FuncGenerator{
+    protected:
         Function* func;
         raw_ostream& out_cfile;
         std::set<Argument*> channelArg;
+        std::set<Instruction*> specialExclude;
     public:
         FuncGenerator(Function* f, raw_ostream& os):out_cfile(os)
         {
@@ -121,6 +124,8 @@ namespace GenCFunc {
                 for(auto insIter = curBB->begin(); insIter!=curBB->end(); insIter++)
                 {
                     Instruction* curIns = &(cast<Instruction>(*insIter));
+                    if(specialExclude.count(curIns))
+                        continue;
                     InstructionGenerator ig(curIns,&varDecl,curBBContent,&phiPreAssign);
                     ig.generateInstruction();
                 }
@@ -164,6 +169,7 @@ namespace GenCFunc {
             }
 
             addBarSubTabs(false);
+            printTabbedLines(out_cfile,"}");
 
 
 
@@ -179,7 +185,20 @@ namespace GenCFunc {
         PipelinedCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os){}
         void generateChannelAllocation()
         {
-
+            // iterate through the alloca in the entry block, and make them exclude
+            BasicBlock& myOnlyBlock = func->getEntryBlock();
+            for(auto insIter = myOnlyBlock.begin(); insIter!=myOnlyBlock.end(); insIter++)
+            {
+                if(isa<AllocaInst>(*insIter))
+                {
+                    // declare the channel object
+                    specialExclude.insert(insIter);
+                }
+                else if (isa<CallInst>(*insIter))
+                {
+                    specialExclude.insert(insIter);
+                }
+            }
         }
 
         void generateFunction()

@@ -163,6 +163,314 @@ namespace GenCFunc {
             else
                 llvm_unreachable("unsupported terminator type");
         }
+        void generateBinaryOperator()
+        {
+            std::string binaryOpStr="";
+            std::string varName = generateVariableName(insn);
+            Value* firstOperand = insn->getOperand(0);
+            Value* secondOperand = insn->getOperand(1);
+
+            std::string firstOperandStr = generateOperandStr(firstOperand);
+            std::string secondOperandStr = generateOperandStr(secondOperand);
+            binaryOpStr += varName;
+            binaryOpStr += " = ";
+            // generate the actual computation
+            switch(insn->getOpcode())
+            {
+                case Instruction::Add:
+                case Instruction::FAdd:
+                    binaryOpStr += firstOperandStr + "+";
+                    break;
+                case Instruction::Sub:
+                case Instruction::FSub:
+                    binaryOpStr += firstOperandStr + "-";
+                    break;
+                case Instruction::Mul:
+                case Instruction::FMul:
+                    binaryOpStr += firstOperandStr + "*";
+                    break;
+                case Instruction::UDiv:
+                case Instruction::SDiv:
+                case Instruction::FDiv:
+                    binaryOpStr +=  firstOperandStr + "/";
+                    break;
+                case Instruction::URem:
+                case Instruction::SRem:
+                case Instruction::FRem:
+                    binaryOpStr +=  firstOperandStr + "%";
+                    break;
+                case Instruction::Shl:
+                    binaryOpStr +=  firstOperandStr + "<<";
+                    break;
+                case Instruction::LShr:
+                case Instruction::AShr:
+                    binaryOpStr +=  firstOperandStr + ">>";
+                    break;
+                case Instruction::And:
+                    binaryOpStr +=  firstOperandStr + "&";
+                    break;
+                case Instruction::Or:
+                    binaryOpStr +=  firstOperandStr + "|";
+                    break;
+                case Instruction::Xor:
+                    binaryOpStr +=  firstOperandStr +"^";
+                    break;
+                default:
+                    llvm_unreachable("unsupported binary operator");
+
+            }
+            binaryOpStr +=  secondOperandStr+";";
+            bbContent->push_back(binaryOpStr);
+        }
+        void generateAllocaOperation()
+        {
+            std::string varName = generateVariableName(insn);
+
+            Type* allocaPtrTy = insn->getType();
+            assert(isa<PointerType>(*allocaPtrTy) &&"allocaInst not producing pointer type");
+            PointerType& ptrType = cast<PointerType>(*allocaPtrTy);
+            Type* pointedType = ptrType.getPointerElementType();
+            std::string stackVarType = getLLVMTypeStr(pointedType);
+            std::string stackVarName = varName+"_ele";
+            std::string stackVarDec = stackVarType+" "+stackVarName+";";
+            std::string ptrAssign = varName+ " = &"+stackVarDec+";";
+            topVarDecl->push_back(stackVarDec);
+            topVarDecl->push_back(ptrAssign);
+
+        }
+
+        void generateLoadOperation()
+        {
+            std::string memoryOpStr="";
+            std::string varName = generateVariableName(insn);
+            LoadInst& li = cast<LoadInst>(*insn);
+            Value* ldPtrVal = li.getPointerOperand();
+            std::string ldPtrStr = generateOperandStr(ldPtrVal);
+            memoryOpStr+=varName+"= *("+ldPtrStr+");";
+            bbContent->push_back(memoryOpStr);
+        }
+
+        void generateStoreOperation()
+        {
+            std::string memoryOpStr="";
+            StoreInst& si = cast<StoreInst>(*insn);
+            Value* stPtrVal = si.getPointerOperand();
+            Value* stVal = si.getValueOperand();
+            std::string stPtrStr = generateOperandStr(stPtrVal);
+            std::string stValStr = generateOperandStr(stVal);
+            memoryOpStr +="*("+stPtrStr+") = "+stValStr+";";
+            bbContent->push_back(memoryOpStr);
+        }
+
+        void generateGetElementOperation()
+        {
+            std::string memoryOpStr="";
+            std::string varName = generateVariableName(insn);
+
+            GetElementPtrInst& gepi = cast<GetElementPtrInst>(*insn);
+            Value* ptr = gepi.getPointerOperand();
+            std::string ptrStr = generateOperandStr( ptr);
+            Value* offsetVal = gepi.getOperand(1);
+            std::string offSetStr = generateOperandStr(offsetVal);
+            // check the index array and do additions
+            memoryOpStr += varName+"= "+ptrStr+"+"+offSetStr+";";
+            bbContent->push_back(memoryOpStr);
+        }
+        void generateCastOperation()
+        {
+            CastInst& ci = cast<CastInst>(*insn);
+            std::string castOpStr="";
+            std::string varName = generateVariableName(insn);
+            switch(insn->getOpcode())
+            {
+                case Instruction::Trunc:
+                case Instruction::ZExt:
+                case Instruction::SExt:
+                case Instruction::BitCast:
+                    // just generate a simple assignment(do we really need to cast? verilog would do it automatically)
+                    castOpStr+= varName+" = "+generateOperandStr(ci.getOperand(0))+";";
+                    break;
+                default:
+                    llvm_unreachable("unsupported cast operator");
+            }
+            bbContent->push_back(castOpStr);
+        }
+        void generateSelectOperation()
+        {
+            std::string selectOpStr="";
+            std::string varName = generateVariableName(insn);
+            SelectInst& si = cast<SelectInst>(*insn);
+            Value* condVal =  si.getCondition();
+            std::string condStr  = generateOperandStr(condVal);
+            Value* trueVal =  si.getTrueValue();
+            std::string trueStr = generateOperandStr(trueVal );
+            Value* falseVal = si.getFalseValue();
+            std::string falseStr = generateOperandStr(falseVal);
+            selectOpStr += varName+ "="+condStr+"?"+trueStr+":"+falseStr+";";
+            bbContent->push_back(selectOpStr);
+        }
+        void generateCmpOperation()
+        {
+            std::string cmpOpStr = "";
+            std::string cmpOperator="";
+            std::string varName = generateVariableName(insn);
+                //int numberOfOperands = curIns.getNumOperands();
+            CmpInst& ci = cast<CmpInst>(*insn);
+            Value* first = ci.getOperand(0);
+            Value* second = ci.getOperand(1);
+            std::string firstVal = generateOperandStr(first);
+            std::string secondVal = generateOperandStr(second);
+            bool def=false;
+            std::string constBool="";
+            switch(ci.getPredicate())
+            {
+                case CmpInst::FCMP_FALSE:
+                    def=true;
+                    constBool+="0";
+                    break;
+                case CmpInst::FCMP_TRUE:
+                    def=true;
+                    constBool+="1";
+                    break;
+                case CmpInst::ICMP_EQ:
+                case CmpInst::FCMP_OEQ:
+                case CmpInst::FCMP_UEQ:
+                    cmpOperator+="==";
+                    break;
+                case CmpInst::ICMP_SGT:
+                case CmpInst::ICMP_UGT:
+                case CmpInst::FCMP_UGT:
+                case CmpInst::FCMP_OGT:
+                    cmpOperator+=">";
+                    break;
+                case CmpInst::ICMP_SGE:
+                case CmpInst::ICMP_UGE:
+                case CmpInst::FCMP_UGE:
+                case CmpInst::FCMP_OGE:
+                    cmpOperator+=">=";
+                    break;
+                case CmpInst::ICMP_SLT:
+                case CmpInst::ICMP_ULT:
+                case CmpInst::FCMP_ULT:
+                case CmpInst::FCMP_OLT:
+                    cmpOperator+="<";
+                    break;
+                case CmpInst::ICMP_ULE:
+                case CmpInst::ICMP_SLE:
+                case CmpInst::FCMP_ULE:
+                case CmpInst::FCMP_OLE:
+                    cmpOperator+="<=";
+                    break;
+                case CmpInst::ICMP_NE:
+                case CmpInst::FCMP_UNE:
+                case CmpInst::FCMP_ONE:
+                    cmpOperator+="!=";
+                    break;
+                default:
+                    llvm_unreachable("unsupported cmp operation");
+            }
+            if(def)
+                cmpOpStr+= varName+"="+constBool+";";
+            else
+                cmpOpStr+= varName+"="+firstVal+cmpOperator+secondVal+";";
+            bbContent->push_back(cmpOpStr);
+
+        }
+        void generateCallOperation()
+        {
+            CallInst& ci = cast<CallInst>(*insn);
+            Function* callee = ci.getCalledFunction();
+            std::string callOpStr = callee->getName();
+            callOpStr+="(";
+            for(unsigned i = 0; i<ci.getNumArgOperands(); i++)
+            {
+                Value* curOp = ci.getArgOperand(i);
+                callOpStr+=generateOperandStr(curOp);
+                if(i!=ci.getNumArgOperands()-1)
+                    callOpStr+=",";
+            }
+            callOpStr+=");";
+            bbContent->push_back(callOpStr);
+        }
+        void generateInstructionBody()
+        {
+            if(isa<TerminatorInst>(*insn))
+                generateTerminator();
+            else if(isa<PHINode>(*insn))
+                generatePhiNode();
+            else if(isa<BinaryOperator>(*insn))
+                generateBinaryOperator();
+            else if(isa<AllocaInst>(*insn))
+                generateAllocaOperation();
+            else if(isa<LoadInst>(*insn))
+                generateLoadOperation();
+            else if(isa<StoreInst>(*insn))
+                generateStoreOperation();
+            else if(isa<GetElementPtrInst>(*insn))
+                generateGetElementOperation();
+            else if(isa<CastInst>(*insn))
+                generateCastOperation();
+            else if(isa<SelectInst>(*insn))
+                generateSelectOperation();
+            else if(isa<CmpInst>(*insn))
+                generateCmpOperation();
+            else if(isa<CallInst>(*insn))
+                generateCallOperation();
+            else
+                llvm_unreachable("unsupported operation");
+
+        }
+
+/*
+        void generateMemoryOperation()
+        {
+            std::string memoryOpStr="";
+            std::string varName = generateVariableName(insn);
+            if(isa<AllocaInst>(*insn))
+            {
+                Type* allocaPtrTy = insn->getType();
+                assert(isa<PointerType>(*allocaPtrTy) &&"allocaInst not producing pointer type");
+                PointerType& ptrType = cast<PointerType>(*allocaPtrTy);
+                Type* pointedType = ptrType.getPointerElementType();
+                std::string stackVarType = getLLVMTypeStr(pointedType);
+                std::string stackVarName = varName+"_ele";
+                std::string stackVarDec = stackVarType+" "+stackVarName+";";
+                std::string ptrAssign = varName+ " = &"+stackVarDec+";";
+                topVarDecl->push_back(stackVarDec);
+                topVarDecl->push_back(ptrAssign);
+            }
+            else if(isa<LoadInst>(*insn))
+            {
+                LoadInst& li = cast<LoadInst>(*insn);
+                Value* ldPtrVal = li.getPointerOperand();
+                std::string ldPtrStr = generateOperandStr(ldPtrVal);
+                memoryOpStr+=varName+"= *("+ldPtrStr+");";
+            }
+            else if(isa<StoreInst>(*insn))
+            {
+                StoreInst& si = cast<StoreInst>(*insn);
+                Value* stPtrVal = si.getPointerOperand();
+                Value* stVal = si.getValueOperand();
+                std::string stPtrStr = generateOperandStr(stPtrVal);
+                std::string stValStr = generateOperandStr(stVal);
+                memoryOpStr +="*("+stPtrStr+") = "+stValStr+";";
+            }
+            else if(isa<GetElementPtrInst>(*insn))
+            {
+                GetElementPtrInst& gepi = cast<GetElementPtrInst>(*insn);
+                Value* ptr = gepi.getPointerOperand();
+                std::string ptrStr = generateOperandStr( ptr);
+                Value* offsetVal = gepi.getOperand(1);
+                std::string offSetStr = generateOperandStr(offsetVal);
+                // check the index array and do additions
+                memoryOpStr += varName+"= "+ptrStr+"+"+offSetStr+";";
+
+            }
+            else
+                llvm_unreachable("unsupported memory operation");
+            bbContent->push_back(memoryOpStr);
+        }
+*/
     public:
         InstructionGenerator(Instruction* curIns,
                              std::vector<std::string>* varDecl,
@@ -181,12 +489,7 @@ namespace GenCFunc {
             std::string curVarDec = generateVarDecl();
             if(curVarDec!="")
                 topVarDecl->push_back(curVarDec);
-            // doing something special for phi as it does not involve actual
-            // computation
-            if(isa<TerminatorInst>(*insn))
-                generateTerminator();
-            if(isa<PHINode>(*insn))
-                generatePhiNode();
+            generateInstructionBody();
 
         }
     };

@@ -62,6 +62,7 @@ static std::string generateConstantStr(Constant& original)
     }
     else if(isa<ConstantInt>(original))
     {
+        errs()<<original<<" is a constant int\n";
         ConstantInt& intRef = cast<ConstantInt>(original);
         APInt pint = intRef.getValue();
         std::string str=pint.toString(10,true);
@@ -81,7 +82,7 @@ static std::string generateVariableName(Instruction* ins)
 
 
 
-std::string getLLVMTypeStr(Type *Ty) {
+std::string getLLVMTypeStr(Type *Ty, bool cpuInt=true) {
   switch (Ty->getTypeID()) {
       case Type::VoidTyID:      return "void";
       case Type::HalfTyID:      return "half";
@@ -94,8 +95,17 @@ std::string getLLVMTypeStr(Type *Ty) {
       case Type::MetadataTyID:  return "metadata";
       case Type::X86_MMXTyID:   return "x86_mmx";
       case Type::IntegerTyID: {
-         std::string curType = "ap_int<" + boost::lexical_cast<std::string>(cast<IntegerType>(Ty)->getBitWidth())+">";
-         return curType;
+         if(cpuInt)
+         {
+             int width = cast<IntegerType>(Ty)->getBitWidth();
+             std::string curType = width<=32? "int":"long";
+             return curType;
+         }
+         else
+         {
+             std::string curType = "ap_int<" + boost::lexical_cast<std::string>(cast<IntegerType>(Ty)->getBitWidth())+">";
+             return curType;
+         }
       }
       case Type::FunctionTyID: {
           assert(false && "not generating function ID");

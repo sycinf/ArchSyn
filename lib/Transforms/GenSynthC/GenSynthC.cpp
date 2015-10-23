@@ -8,6 +8,16 @@
 #include "GenCFunc.h"
 using namespace llvm;
 using namespace GenCFunc;
+
+namespace boost{
+    void throw_exception(std::exception const & e)
+    {
+        errs()<<"boost exception";
+        exit(1);
+    }
+}
+
+
 namespace {
   // Hello - The first implementation, without getAnalysisUsage.
   struct GenSynthC : public ModulePass {
