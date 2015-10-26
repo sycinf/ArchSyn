@@ -50,6 +50,10 @@ static cl::opt<bool>
 NoOutput("disable-output",
          cl::desc("Do not write result bitcode file"), cl::Hidden);
 
+static cl::opt<bool>
+GenerateCPUMode("cpu-mode",
+                  cl::desc("generate the functions which would be run by the cpu"));
+
 
 //===----------------------------------------------------------------------===//
 // main for dppgen
@@ -111,7 +115,7 @@ int main(int argc, char **argv) {
   // the second pass is to generate the synthesizable C version for each generated function
 
 
-  Passes.add(llvm::createGenSynthCPass(Out->os()));
+  Passes.add(llvm::createGenSynthCPass(Out->os(),GenerateCPUMode));
 
 
   // Before executing passes, print the final values of the LLVM options.

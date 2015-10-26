@@ -222,9 +222,6 @@ errs()<<"\t\t\t\t\t\tafter addPathBBsToBBMap : \n";
                 std::set<Instruction*>* curBBInsns = bmi->second;
                 addPhiOwner2Vector(curBBInsns, AllBBs);
             }
-errs()<<"\t\t\t\t\t\tafter addPhiOwner : \n";
-            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
-                errs()<<(*(bbIter))->getName()<<"\n";
 
 
             // a special pass to search for every insBB and srcBB themselves
@@ -246,9 +243,6 @@ errs()<<"\t\t\t\t\t\tafter addPhiOwner : \n";
                 if(curBB!= dominator)
                     addPathToSelf(curBB,AllBBs,dominator);
             }
-errs()<<"\t\t\t\t\t\tafter add2Self : \n";
-            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
-                errs()<<(*(bbIter))->getName()<<"\n";
 
 
             // make sure everybody's predecessor is either dominator or part of AllBBs
@@ -296,9 +290,6 @@ errs()<<"\t\t\t\t\t\tafter add2Self : \n";
                     }
                 }
             }
-errs()<<"\t\t\t\t\t\tafter adding predecesor block : \n";
-            for(auto bbIter = AllBBs.begin(); bbIter!= AllBBs.end(); bbIter++ )
-                errs()<<(*(bbIter))->getName()<<"\n";
 
 
             LoopInfo* li =top->getAnalysisIfAvailable<LoopInfo>();

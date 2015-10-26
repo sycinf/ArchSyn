@@ -47,12 +47,9 @@ namespace GenCFunc {
             for(auto argIter = func->arg_begin(); argIter!=func->arg_end(); /*argIter++*/)
             {
                 Argument* curFuncArg = &(cast<Argument>(*argIter));
-                std::string argAttr = func->getAttributes().getAsString(curFuncArg->getArgNo()+1);
                 Type* type2Print;
-                std::string channelAttrStr = "\"";
-                channelAttrStr +=CHANNELATTR;
-                channelAttrStr +="\"";
-                if(argAttr==channelAttrStr)
+                bool argIsChannel = isArgChannel(curFuncArg);
+                if(argIsChannel)
                 {
                     assert(curFuncArg->getType()->getTypeID() == Type::PointerTyID && "channel is not a pointer type");
                     PointerType* curArgType = &(cast<PointerType>(*(curFuncArg->getType())));
@@ -63,8 +60,10 @@ namespace GenCFunc {
                     type2Print = curFuncArg->getType();
                 std::string curArgTypeStr = getLLVMTypeStr(type2Print);
 
-                if(argAttr==channelAttrStr)
-                    curArgTypeStr = "channel<"+curArgTypeStr+">";
+                if(argIsChannel && getGeneratingCPU())
+                    curArgTypeStr = "channel<"+curArgTypeStr+">&";
+                else if(argIsChannel)
+                    curArgTypeStr = curArgTypeStr+"* ";
 
                 std::string varTypewName = curArgTypeStr+" ";
                 varTypewName += curFuncArg->getName();
@@ -196,6 +195,7 @@ namespace GenCFunc {
                 }
                 else if (isa<CallInst>(*insIter))
                 {
+                    // create special pthread library to make things happen
                     specialExclude.insert(insIter);
                 }
             }

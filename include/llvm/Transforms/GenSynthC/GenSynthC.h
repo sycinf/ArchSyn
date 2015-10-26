@@ -7,7 +7,7 @@
 using namespace llvm;
 
 namespace llvm{
-    ModulePass* createGenSynthCPass(llvm::raw_ostream &OS);
+    ModulePass* createGenSynthCPass(llvm::raw_ostream &OS,bool targetCPU);
 }
 
 

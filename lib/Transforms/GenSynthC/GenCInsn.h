@@ -246,7 +246,20 @@ namespace GenCFunc {
             LoadInst& li = cast<LoadInst>(*insn);
             Value* ldPtrVal = li.getPointerOperand();
             std::string ldPtrStr = generateOperandStr(ldPtrVal);
-            memoryOpStr+=varName+"= *("+ldPtrStr+");";
+
+            bool pointerIsChannel = false;
+            if(isa<Argument>(*ldPtrVal))
+            {
+                Argument* curFuncArg = &(cast<Argument>(*ldPtrVal));
+                pointerIsChannel = isArgChannel(curFuncArg);
+            }
+            memoryOpStr+=varName+"=";
+            if(!getGeneratingCPU() || !pointerIsChannel)
+                memoryOpStr+=" *("+ldPtrStr+");";
+            else
+            {
+                memoryOpStr+="pop("+ldPtrStr+");";
+            }
             bbContent->push_back(memoryOpStr);
         }
 
@@ -258,7 +271,22 @@ namespace GenCFunc {
             Value* stVal = si.getValueOperand();
             std::string stPtrStr = generateOperandStr(stPtrVal);
             std::string stValStr = generateOperandStr(stVal);
-            memoryOpStr +="*("+stPtrStr+") = "+stValStr+";";
+            // check if the pointer is an argument with
+            // attribute channel
+            bool pointerIsChannel = false;
+            if(isa<Argument>(*stPtrVal))
+            {
+                Argument* curFuncArg = &(cast<Argument>(*stPtrVal));
+                pointerIsChannel = isArgChannel(curFuncArg);
+            }
+            if(!getGeneratingCPU() || !pointerIsChannel )
+            {
+                memoryOpStr +="*("+stPtrStr+") = "+stValStr+";";
+            }
+            else
+            {
+                memoryOpStr +="push("+stPtrStr+","+ stValStr +");";
+            }
             bbContent->push_back(memoryOpStr);
         }
 

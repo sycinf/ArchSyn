@@ -191,7 +191,7 @@ int main(int argc, char **argv) {
   if(!OutputCFileName.empty())
   {
     errs()<<"added cprint pass\n";
-    Passes.add(llvm::createGenSynthCPass(OutC->os()));
+    Passes.add(llvm::createGenSynthCPass(OutC->os(),GenerateCPUMode));
   }
 
   //PartitionGen* pg = new PartitionGen(Out->os(),fdesOut->os(),NoControlFlowDup,GenerateCPUMode);

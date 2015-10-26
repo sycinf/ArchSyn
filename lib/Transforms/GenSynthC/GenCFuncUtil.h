@@ -3,6 +3,7 @@
 #include <string>
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/Transforms/GenSynthC/GenSynthC.h"
+#include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
 #include "llvm/IR/Constants.h"
 #include <boost/lexical_cast.hpp>
 using namespace llvm;
@@ -16,6 +17,15 @@ static void addBarSubTabs(bool addBarSub)
         numTabs++;
     else
         numTabs--;
+}
+
+static bool getGeneratingCPU()
+{
+    return CPU_bar_HLS;
+}
+static void setGeneratingCPU(bool val)
+{
+    CPU_bar_HLS = val;
 }
 
 static void printTabbedLines(raw_ostream& out, std::string lineStr)
@@ -71,6 +81,17 @@ static std::string generateConstantStr(Constant& original)
     return rtStr;
 }
 
+bool isArgChannel(Argument* curFuncArg)
+{
+    Function* func = curFuncArg->getParent();
+    std::string argAttr = func->getAttributes().getAsString(curFuncArg->getArgNo()+1);
+
+    std::string channelAttrStr = "\"";
+    channelAttrStr +=CHANNELATTR;
+    channelAttrStr +="\"";
+    return channelAttrStr==argAttr;
+}
+
 static std::string generateVariableName(Instruction* ins)
 {
     int seqNum = getInstructionSeqNum(ins);
@@ -82,7 +103,8 @@ static std::string generateVariableName(Instruction* ins)
 
 
 
-std::string getLLVMTypeStr(Type *Ty, bool cpuInt=true) {
+std::string getLLVMTypeStr(Type *Ty) {
+  bool cpuInt=getGeneratingCPU();
   switch (Ty->getTypeID()) {
       case Type::VoidTyID:      return "void";
       case Type::HalfTyID:      return "half";
