@@ -8,6 +8,8 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
+
 using namespace llvm;
 static void addAncestorsNotPDominatedBy(BasicBlock* tgtBB, std::vector<BasicBlock*>* curPredecessors,
                                         PostDominatorTree* PDT, BB2BBVectorMapTy& BasicBlock2Predecessors,
@@ -159,7 +161,7 @@ bool InstructionGraph::runOnFunction(Function &M) {
     errs()<<"ins grph ";
 
     // if the function dppcreated, then we skip
-    if(M.hasFnAttribute("dppcreated"))
+    if(M.hasFnAttribute(GENERATEDATTR))
         return false;
     errs()<<"skip check";
     Func = &M;

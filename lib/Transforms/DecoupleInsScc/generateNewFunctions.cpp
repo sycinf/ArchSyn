@@ -599,7 +599,8 @@ namespace partGen{
         // note if a bb is only in sourceBBs/insBBs, then its instructions
         // are already properly ordered, else the interleaving maybe different
         // -- we will have src instruction supposed to be after ins but end up
-        // being before
+        // being before-- this is because the way we generate instruction was
+        // src before actual ins
         for(auto bbIter = part->AllBBs.begin(); bbIter!= part->AllBBs.end(); bbIter++)
         {
             BasicBlock* curBB = *bbIter;
@@ -623,6 +624,20 @@ namespace partGen{
                         else
                             newIns->insertBefore(bbInNewFunction->begin());
                         lastInserted = newIns;
+                        if(newIns2AuxIns.count(newIns))
+                        {
+                            std::vector<Instruction*>* auxIns = newIns2AuxIns[newIns];
+                            for(auto auxInsIter = auxIns->begin(); auxInsIter!=auxIns->end(); auxInsIter++)
+                            {
+                                Instruction* curAuxIns = *auxInsIter;
+                                curAuxIns->removeFromParent();
+                                curAuxIns->insertAfter(lastInserted);
+                                lastInserted = curAuxIns;
+                            }
+                            delete auxIns;
+                            newIns2AuxIns.erase(newIns);
+                        }
+
 
                     }
                 }

@@ -254,7 +254,7 @@ namespace partGen{
             return cmpInst;
         }
 
-        void generatePushRemoteData(IRBuilder<>& builder)
+        Instruction* generatePushRemoteData(IRBuilder<>& builder)
         {
             // we must have already generated the data locally
             assert(owner->originalIns2NewIns.find(originalInsn)!=owner->originalIns2NewIns.end() &&
@@ -263,7 +263,8 @@ namespace partGen{
                     "fifo argument dont exist for pushing data");
             Instruction* newlyGeneratedInsn = owner->originalIns2NewIns[originalInsn];
             Value* ptrVal = owner->originalVal2ArgVal[originalInsn];
-            builder.CreateStore(newlyGeneratedInsn,ptrVal,true);
+            return builder.CreateStore(newlyGeneratedInsn,ptrVal,true);
+
         }
         Instruction* generatePullRemoteData(IRBuilder<>& builder)
         {
@@ -502,6 +503,14 @@ namespace partGen{
                         newlyGeneratedIns = generateCmpOperation(builder);
                     assert(newlyGeneratedIns && "unhandled old instruction in generating new instruction");
                     setNewInstructionMap(newlyGeneratedIns);
+                    if(remoteDst)
+                    {
+                        std::vector<Instruction*>* curAux = new std::vector<Instruction*>() ;
+                        curAux->push_back(generatePushRemoteData(builder));
+                        owner->newIns2AuxIns[newlyGeneratedIns] = curAux;
+
+                    }
+
 
                 }
             }

@@ -43,6 +43,11 @@ namespace partGen{
         // all values are generated locally -- with newly created instruction
         // some of these are load instruction reading from arg
         std::map<Instruction*,Instruction*> originalIns2NewIns;
+        // this map from a new instruction to all its relevant auxillary instructions
+        // meaning the communication instructions inserted for this particular instruction
+        // this is necessary as we want the aux instruction to be right after it
+        // note this is only used by the reordering routine
+        std::map<Instruction*,std::vector<Instruction*>*> newIns2AuxIns;
 
         std::map<Constant*,Constant*> originalConst2NewConst;
         std::set<PHINode*> oldPhiNode;
