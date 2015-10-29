@@ -101,7 +101,6 @@ namespace partGen{
             else
             {
                 assert(isa<Instruction>(*oldVal) && "neither func arg nor instruction");
-                B.addAttribute(CHANNELATTR);
                 Instruction* oldIns = &(cast<Instruction>(*oldVal));
                 BasicBlock* oldInsBB = oldIns->getParent();
                 std::string newArgName = oldInsBB->getName();
@@ -110,6 +109,8 @@ namespace partGen{
                 newArgName=newArgName+boost::lexical_cast<std::string>(oldInsIndex);
                 if(srcInstruction.count(oldIns))
                 {
+                    B.addAttribute(CHANNELRD);
+
                     newArgName=newArgName+"_rd";
                     errs()<<*oldIns<<"\n";
                     assert(ins2AllocatedChannel.find(oldIns)!=ins2AllocatedChannel.end()
@@ -118,6 +119,7 @@ namespace partGen{
                 }
                 else
                 {
+                    B.addAttribute(CHANNELWR);
                     newArgName=newArgName+"_wr";
                     assert(ins2AllocatedChannel.find(oldIns)==ins2AllocatedChannel.end()
                             &&"sr partition sees allocated channel");

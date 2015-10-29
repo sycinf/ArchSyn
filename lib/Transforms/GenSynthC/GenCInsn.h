@@ -233,7 +233,7 @@ namespace GenCFunc {
             std::string stackVarType = getLLVMTypeStr(pointedType);
             std::string stackVarName = varName+"_ele";
             std::string stackVarDec = stackVarType+" "+stackVarName+";";
-            std::string ptrAssign = varName+ " = &"+stackVarDec+";";
+            std::string ptrAssign = varName+ " = &"+stackVarName+";";
             topVarDecl->push_back(stackVarDec);
             topVarDecl->push_back(ptrAssign);
 
@@ -289,7 +289,8 @@ namespace GenCFunc {
             }
             bbContent->push_back(memoryOpStr);
         }
-
+        // I will need to add in the support for referencing members
+        // in struct
         void generateGetElementOperation()
         {
             std::string memoryOpStr="";

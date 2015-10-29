@@ -5,6 +5,7 @@
 #include "llvm/Transforms/GenSynthC/GenSynthC.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Module.h"
 #include <boost/lexical_cast.hpp>
 using namespace llvm;
 static int numTabs =0;
@@ -26,6 +27,26 @@ static bool getGeneratingCPU()
 static void setGeneratingCPU(bool val)
 {
     CPU_bar_HLS = val;
+}
+static int getFuncSeq(Function* f)
+{
+    // check the seqnum of a function in a module
+    Module* parentModule = f->getParent();
+    int funcSeq = 0;
+    for(auto funcIter = parentModule->begin(); funcIter!=parentModule->end();funcIter++,funcSeq++)
+    {
+        Function* curFunc = &cast<Function>(*funcIter);
+        if(curFunc==f)
+            return funcSeq;
+
+    }
+    return -1;
+}
+static std::string generateInputPackStructType(int packageSeq)
+{
+    std::string returnPackageType = "struct argPack";
+    returnPackageType += boost::lexical_cast<std::string>(packageSeq);
+    return returnPackageType;
 }
 
 static void printTabbedLines(raw_ostream& out, std::string lineStr)
@@ -55,7 +76,16 @@ static int getInstructionSeqNum(Instruction* ins)
     }
     return seqNum;
 }
-
+static int getOperandArgSeq(CallInst* call, Value* arg)
+{
+    unsigned int seq = 0;
+    for(;seq < call->getNumArgOperands(); seq++)
+    {
+        if(call->getArgOperand(seq)==arg)
+            return seq;
+    }
+    return -1;
+}
 static std::string generateConstantStr(Constant& original)
 {
     assert((isa<ConstantFP>(original) || isa<ConstantInt>(original)) &&
@@ -80,17 +110,25 @@ static std::string generateConstantStr(Constant& original)
     }
     return rtStr;
 }
+bool cmpChannelAttr(AttributeSet as, int argSeqNum, std::string channelStr)
+{
+    std::string argAttr = as.getAsString(argSeqNum+1);
+    std::string channelAttrStr = "\"";
+    channelAttrStr +=channelStr;
+    channelAttrStr +="\"";
+    return argAttr == channelAttrStr;
+}
 
 bool isArgChannel(Argument* curFuncArg)
 {
     Function* func = curFuncArg->getParent();
-    std::string argAttr = func->getAttributes().getAsString(curFuncArg->getArgNo()+1);
+    bool isWrChannel = cmpChannelAttr(func->getAttributes(), curFuncArg->getArgNo(), CHANNELWR);
+    bool isRdChannel = cmpChannelAttr(func->getAttributes(), curFuncArg->getArgNo(), CHANNELRD);
 
-    std::string channelAttrStr = "\"";
-    channelAttrStr +=CHANNELATTR;
-    channelAttrStr +="\"";
-    return channelAttrStr==argAttr;
+    return isWrChannel || isRdChannel;
 }
+
+
 
 static std::string generateVariableName(Instruction* ins)
 {
@@ -101,7 +139,25 @@ static std::string generateVariableName(Instruction* ins)
 }
 
 
+std::string generateFifoChannelName(Instruction* ins)
+{
+    std::string fifoName = generateVariableName(ins)+"_fifo";
+    return fifoName;
+}
 
+std::string generateFifoChannelInfoName(Instruction* insn, User* user)
+{
+    // see the seq of user it is
+    int seq = 0;
+    for(auto user_iter = insn->user_begin(); user_iter != insn->user_end(); user_iter++)
+    {
+        if(*user_iter == user)
+            break;
+        seq++;
+    }
+    return generateFifoChannelName(insn)+"_info"+boost::lexical_cast<std::string>(seq);
+
+}
 
 std::string getLLVMTypeStr(Type *Ty) {
   bool cpuInt=getGeneratingCPU();
