@@ -109,7 +109,7 @@ namespace GenCFunc {
             std::string returnPackageType = generateInputPackStructType(packageSeq);
             std::string returnPackageName = "argPackage"+boost::lexical_cast<std::string>(packageSeq);
 
-            std::string returnPackageStr = returnPackageType+" "+returnPackageName+"{";
+            std::string returnPackageStr = returnPackageType+" "+returnPackageName+"={";
 
             for(unsigned argSeq = 0 ;
                 argSeq < cinsn->getNumArgOperands();
@@ -123,6 +123,7 @@ namespace GenCFunc {
                 {
                     AllocaInst* channelAllocaInst = &cast<AllocaInst>(*curArgInCallInst);
                     std::string channelInfoName = generateFifoChannelInfoName(channelAllocaInst,cinsn);
+                    curPackEntry+="&";
                     curPackEntry+=channelInfoName;
                 }
                 else
@@ -172,7 +173,7 @@ namespace GenCFunc {
         Function* func;
         raw_ostream& out_cfile;
         std::set<Argument*> channelArg;
-        std::set<Instruction*> specialExclude;
+        std::map<Instruction*,std::string> specialExclude;
         std::string bodyPrefixStr;
     public:
         FuncGenerator(Function* f, raw_ostream& os):out_cfile(os)
@@ -273,7 +274,11 @@ namespace GenCFunc {
                 {
                     Instruction* curIns = &(cast<Instruction>(*insIter));
                     if(specialExclude.count(curIns))
+                    {
+                        std::string specialStr= specialExclude[curIns];
+                        curBBContent->push_back(specialStr);
                         continue;
+                    }
                     InstructionGenerator ig(curIns,&varDecl,curBBContent,&phiPreAssign);
                     ig.generateInstruction();
                 }
@@ -336,121 +341,76 @@ namespace GenCFunc {
         {
             // iterate through the alloca in the entry block, and make them exclude
             BasicBlock& myOnlyBlock = func->getEntryBlock();
+            int numFuncCall = 0;
+            Instruction* lastCallInst=0;
             for(auto insIter = myOnlyBlock.begin(); insIter!=myOnlyBlock.end(); insIter++)
             {
+
+                /*
+
+                            pthread_create(&threads[0], &attr, spMMult0Wrapper,&argPackage0);
+                            pthread_create(&threads[1], &attr, spMMult1Wrapper,&argPackage1);
+                            pthread_create(&threads[2], &attr, spMMult2Wrapper,&argPackage2);
+                            pthread_create(&threads[3], &attr, spMMult3Wrapper,&argPackage3);
+                            pthread_create(&threads[4], &attr, spMMult4Wrapper,&argPackage4);
+                            pthread_create(&threads[5], &attr, spMMult5Wrapper,&argPackage5);
+                            int i;
+                            for (i=0; i<6; i++) pthread_join(threads[i], NULL);*/
+
+
                 if(getGeneratingCPU())
                 {
                     if(isa<AllocaInst>(*insIter))
                     {
                         // declare the channel object
-                        specialExclude.insert(insIter);
+
                         AllocaInst* ai = &(cast<AllocaInst>(*insIter));
                         CPUChannelGenerator ccg(ai);
                         string channelStr=ccg.generateChannelStr();
                         FuncGenerator::bodyPrefixStr+=channelStr+"\n";
+                        specialExclude[insIter]="";
                     }
                     else if (isa<CallInst>(*insIter))
                     {
-                        specialExclude.insert(insIter);
                         // create special pthread library to make things happen
                         CallInst* curCallInst = &cast<CallInst>(*insIter);
                         CPUThreadInputGenerator curInputPack(curCallInst);
                         string inputPack = curInputPack.generateInputPackage();
                         FuncGenerator::bodyPrefixStr+= inputPack;
+                        // call to the wrapper
+                        int packageSeq = getFuncSeq(curCallInst->getCalledFunction());
+                        std::string returnPackageName = "argPackage"+boost::lexical_cast<std::string>(packageSeq);
+
+
+                        std::string pthreadCallWrapper = "pthread_create(&threads[";
+                        pthreadCallWrapper+=boost::lexical_cast<std::string>(numFuncCall)+"], &attr, ";
+                        pthreadCallWrapper+= curCallInst->getCalledFunction()->getName();
+                        pthreadCallWrapper+="wrapper,&"+returnPackageName+");\n";
+
+                        specialExclude[insIter] = pthreadCallWrapper ;
+                        lastCallInst=insIter;
+                        // the last function call also takes charge of doing the threadjoin
+                        numFuncCall++;
 
                     }
+
+
                 }
             }
-
-
-            /*
-            std::string funcName = pg->curFunc->getName();
-
-                std::vector<argPair*> funcArgInDecl;
-
-                Function::ArgumentListType &Args(pg->curFunc->getArgumentList());
-                for (Function::ArgumentListType::const_iterator i = Args.begin(),
-                                                                e = Args.end();
-                     i != e; ++i) {
-                    const Value* curArgVal = &(*i);
-
-                    argPair* curTopArg = createArg(curArgVal->getName(), generateVariableType(curArgVal), curArgVal->getType()->getScalarSizeInBits(),0);
-                    funcArgInDecl.push_back(curTopArg);
-                }
-                std::string driverDecl = genFunctionDeclarationStr(funcName,funcArgInDecl,pg->curFunc->getReturnType());
-
-                // how do we generate the fifo space?
-                // for every fifo arg, we know how many occurrence there are
-                // among all functions, one would be the src, the others would
-                // be consumer
-                std::map<std::string,int> fifoArgName2UseTimes;
-                std::map<std::string, std::string> fifoArgName2Type;
-                for(unsigned int fifoVecInd = 0; fifoVecInd<allFifoArgs.size(); fifoVecInd++)
-                {
-                    std::vector<argPair*>* curPartitionFifo = allFifoArgs[fifoVecInd];
-                    for(unsigned int fifoInd = 0; fifoInd<curPartitionFifo->size(); fifoInd++)
-                    {
-                        argPair* curArgPair = curPartitionFifo->at(fifoInd);
-                        if(fifoArgName2UseTimes.find(curArgPair->argName) == fifoArgName2UseTimes.end())
-                        {
-                            if(curArgPair->dir!=1)
-                            {
-                                errs()<<"read from a later stage:\n";
-                                errs()<<curArgPair->argName<<"\n";
-                            }
-                            fifoArgName2UseTimes[curArgPair->argName] = 1;
-                            fifoArgName2Type[curArgPair->argName] = curArgPair->argType;
-                        }
-                        else
-                            fifoArgName2UseTimes[curArgPair->argName] += 1;
-                    }
-                }
-
-
-                std::string allocateReturnSpace = "";
-                if(pg->curFunc->getReturnType()->getTypeID()!=Type::VoidTyID)
-                {
-                    allocateReturnSpace = generateAllocateReturnSpace(pg->curFunc);
-                }
-                std::string cpuFifoSpaceStr = generateInterFuncFifoDecl(fifoArgName2UseTimes,fifoArgName2Type);
-                // now we generate the calling of function
-                // note we have to package the argument of the threads into a void*
-                std::string indiStageArguPackageInsInit="";
-                std::string indiStageArguPackageDec = generateIndiStageArguPackageDec(allFunctionArgs,allFifoArgs,indiStageArguPackageInsInit);
-                std::string functionCallThreadWrappers = generateFuncCallWrapper(funcName,allFunctionArgs,allFifoArgs,pg);
-                std::string rtStr="";
-
-                addTabbedLine(rtStr,indiStageArguPackageDec);
-                addTabbedLine(rtStr, functionCallThreadWrappers);
-                // add the wrapper for each function: the function generated
-                // here would be run in thread
-                addTabbedLine(rtStr, driverDecl);
-                addTabbedLine(rtStr,"{");
-                addBarSubTabs(true);
-
-                addTabbedLine(rtStr,cpuFifoSpaceStr);
-                addTabbedLine(rtStr,allocateReturnSpace);
-                addTabbedLine(rtStr,indiStageArguPackageInsInit);
-                addTabbedLine(rtStr,generateThreadSetup(pg->partitions.size()));
-                // now generate the launch of threads
-                for(unsigned int threadInd = 0; threadInd < pg->partitions.size(); threadInd++)
-                {
-                    addTabbedLine(rtStr, generateIndividualThreadLaunch(threadInd,funcName+int2Str(threadInd)));
-                }
-                addTabbedLine(rtStr, generateThreadJoin(pg->partitions.size()));
-                if(pg->curFunc->getReturnType()->getTypeID()!=Type::VoidTyID)
-                {
-                    addTabbedLine(rtStr,"return *"+generateReturnVarName(pg->curFunc)+";\n");
-                }
-                addBarSubTabs(false);
-                addTabbedLine(rtStr,"}");
-
-                return rtStr;
-
-            */
-
-
-
+            std::string pthreadStuff = "pthread_t threads[";
+            pthreadStuff+=boost::lexical_cast<std::string>(numFuncCall);
+            pthreadStuff+="];\n";
+            pthreadStuff+="pthread_attr_t attr;\n";
+            pthreadStuff+="pthread_attr_init(&attr);\n";
+            pthreadStuff+="pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);\n";
+            FuncGenerator::bodyPrefixStr+=pthreadStuff;
+            if(lastCallInst)
+            {
+                std::string originalLastFuncCall = specialExclude[lastCallInst];
+                std::string joinStuff = "for (int i=0; i<";
+                joinStuff+= boost::lexical_cast<std::string>(numFuncCall)+"; i++) pthread_join(threads[i], NULL);\n";
+                specialExclude[lastCallInst] = originalLastFuncCall+joinStuff;
+            }
         }
 
         void generateFunction()
@@ -471,6 +431,29 @@ namespace GenCFunc {
 
     public:
         NormalCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os){}
+
+        std::string getPackageArgType(Argument* curArg)
+        {
+            Type* curArgType = curArg->getType();
+            std::string typeStr = getLLVMTypeStr(curArgType);
+            if(isArgChannel(curArg))
+            {
+                PointerType* curPtTy = &cast<PointerType>(*curArgType);
+                Type* channelType = curPtTy->getPointerElementType();
+                typeStr=getLLVMTypeStr(channelType);
+                typeStr = "channel_info<"+typeStr+">*";
+            }
+            return typeStr;
+
+        }
+        std::string generateReturnValName()
+        {
+            std::string nameStr = func->getName();
+            nameStr+="return_val";
+            return nameStr;
+
+        }
+
         void generateCPUThreadWrapper()
         {
             std::string funcDec = func->getName();
@@ -481,19 +464,40 @@ namespace GenCFunc {
             addBarSubTabs(true);
             // actually calling function with packaged input
             std::string structType = generateInputStructType();
-            std::string structDec = structType+"* localPackArg = ("+structType+"*)arg;";
+            std::string localPackName = "localPackArg";
+            std::string structDec = structType+"* "+localPackName+" = ("+structType+"*)arg;";
             printTabbedLines(out_cfile,structDec);
             // one by one create the argument to pass into the function
-
+            for(auto argIter = func->arg_begin(); argIter != func->arg_end(); argIter++)
+            {
+                Argument* curArg = &cast<Argument>(*argIter);
+                std::string typeStr = getPackageArgType(curArg);
+                std::string curArgName = curArg->getName();
+                std::string assignmentStr = typeStr+" " + curArgName + "=" + localPackName+"->"+curArgName+";";
+                printTabbedLines(out_cfile,assignmentStr);
+            }
             // and return
-
+            std::string funcCallStr="";
+            if(func->getReturnType()->getTypeID()!=Type::VoidTyID)
+            {
+                funcCallStr+="*("+localPackName+"->"+generateReturnValName()+")=";
+            }
             // call the function
-
-            // write return value back into location
-
+            funcCallStr+=func->getName();
+            funcCallStr+="(";
+            for(auto argIter = func->arg_begin(); argIter!=func->arg_end(); argIter++)
+            {
+                if(argIter!=func->arg_begin())
+                    funcCallStr+=",";
+                funcCallStr+=argIter->getName();
+            }
+            funcCallStr+=");";
+            printTabbedLines(out_cfile,funcCallStr);
             addBarSubTabs(false);
             printTabbedLines(out_cfile,"}");
         }
+
+
         void declareInputStructPack()
         {
             std::string structName = generateInputStructType();
@@ -505,30 +509,17 @@ namespace GenCFunc {
             for(auto argIter = func->arg_begin(); argIter!=func->arg_end(); argIter++)
             {
                 Argument* curArg = &cast<Argument>(*argIter);
-                Type* curArgType = curArg->getType();
-                std::string typeStr = getLLVMTypeStr(curArgType);
-                if(isArgChannel(curArg))
-                {
-                    PointerType* curPtTy = &cast<PointerType>(*curArgType);
-                    Type* channelType = curPtTy->getPointerElementType();
-                    typeStr=getLLVMTypeStr(channelType);
-                    typeStr = "channel_info<"+typeStr+">*";
-                }
+                std::string typeStr = getPackageArgType(curArg);
                 std::string nameStr = curArg->getName();
                 typeStr+=" "+nameStr;
-
-                if(argIter!=func->arg_begin())
-                    typeStr = ",\n"+typeStr;
+                typeStr+=";\n";
                 allArgPackMember+=typeStr;
             }
             if(func->getReturnType()->getTypeID()!=Type::VoidTyID)
             {
                 std::string returnTypePtrStr = getLLVMTypeStr(func->getReturnType())+"*";
-                std::string nameStr = func->getName();
-                nameStr+="return_val";
-                returnTypePtrStr+=" "+nameStr;
-                if(func->getArgumentList().size()!=0)
-                    returnTypePtrStr = ",\n"+returnTypePtrStr;
+                returnTypePtrStr+=" "+generateReturnValName();
+                returnTypePtrStr+=";\n";
                 allArgPackMember+=returnTypePtrStr;
 
             }

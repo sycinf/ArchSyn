@@ -140,7 +140,7 @@ namespace GenCFunc {
                 if(!curCaseVal)
                     continue;
                 std::string caseNumStr = generateOperandStr(curCaseVal);
-                switchStr+="\t";
+                switchStr+="\t case ";
                 switchStr+=(caseNumStr+":");
                 switchStr+=" goto ";
                 switchStr+= curBB->getName();
@@ -253,12 +253,13 @@ namespace GenCFunc {
                 Argument* curFuncArg = &(cast<Argument>(*ldPtrVal));
                 pointerIsChannel = isArgChannel(curFuncArg);
             }
-            memoryOpStr+=varName+"=";
             if(!getGeneratingCPU() || !pointerIsChannel)
-                memoryOpStr+=" *("+ldPtrStr+");";
+            {
+                memoryOpStr+=varName+"= *("+ldPtrStr+");";
+            }
             else
             {
-                memoryOpStr+="pop("+ldPtrStr+");";
+                memoryOpStr+="pop("+ldPtrStr+","+varName + ");";
             }
             bbContent->push_back(memoryOpStr);
         }

@@ -41,6 +41,9 @@ namespace {
         (*out_c) << "// GenSynthC: ";
         setGeneratingCPU(generatingCPU);
         (*out_c).write_escaped(M.getName()) << '\n';
+        if(getGeneratingCPU())
+            (*out_c) << "#include \"comm.h\"\n ";
+
         std::vector<NormalCFuncGenerator*> normalFuncGenerators;
         std::vector<PipelinedCFuncGenerator*> pipelineFuncGenerators;
         for(auto funcIter = M.begin(); funcIter!=M.end(); funcIter++)
