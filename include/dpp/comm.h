@@ -6,7 +6,7 @@
 #define FIFO_SIZE 2
 #define u64 long
 template<typename T>
-struct channel
+struct single_fifo
 {
 	T storage[FIFO_SIZE];
 	int	   head;
@@ -128,3 +128,4 @@ void pop(channel_info<T>* channel, T& val)
 	val = fifo->read(fanout_ind);
 }
 #endif
+
