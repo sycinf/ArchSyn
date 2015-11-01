@@ -324,9 +324,6 @@ namespace GenCFunc {
 
             addBarSubTabs(false);
             printTabbedLines(out_cfile,"}");
-
-
-
         }
 
 
@@ -345,19 +342,6 @@ namespace GenCFunc {
             Instruction* lastCallInst=0;
             for(auto insIter = myOnlyBlock.begin(); insIter!=myOnlyBlock.end(); insIter++)
             {
-
-                /*
-
-                            pthread_create(&threads[0], &attr, spMMult0Wrapper,&argPackage0);
-                            pthread_create(&threads[1], &attr, spMMult1Wrapper,&argPackage1);
-                            pthread_create(&threads[2], &attr, spMMult2Wrapper,&argPackage2);
-                            pthread_create(&threads[3], &attr, spMMult3Wrapper,&argPackage3);
-                            pthread_create(&threads[4], &attr, spMMult4Wrapper,&argPackage4);
-                            pthread_create(&threads[5], &attr, spMMult5Wrapper,&argPackage5);
-                            int i;
-                            for (i=0; i<6; i++) pthread_join(threads[i], NULL);*/
-
-
                 if(getGeneratingCPU())
                 {
                     if(isa<AllocaInst>(*insIter))
@@ -393,23 +377,24 @@ namespace GenCFunc {
                         numFuncCall++;
 
                     }
-
-
                 }
             }
-            std::string pthreadStuff = "pthread_t threads[";
-            pthreadStuff+=boost::lexical_cast<std::string>(numFuncCall);
-            pthreadStuff+="];\n";
-            pthreadStuff+="pthread_attr_t attr;\n";
-            pthreadStuff+="pthread_attr_init(&attr);\n";
-            pthreadStuff+="pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);\n";
-            FuncGenerator::bodyPrefixStr+=pthreadStuff;
-            if(lastCallInst)
+            if(getGeneratingCPU())
             {
-                std::string originalLastFuncCall = specialExclude[lastCallInst];
-                std::string joinStuff = "for (int i=0; i<";
-                joinStuff+= boost::lexical_cast<std::string>(numFuncCall)+"; i++) pthread_join(threads[i], NULL);\n";
-                specialExclude[lastCallInst] = originalLastFuncCall+joinStuff;
+                std::string pthreadStuff = "pthread_t threads[";
+                pthreadStuff+=boost::lexical_cast<std::string>(numFuncCall);
+                pthreadStuff+="];\n";
+                pthreadStuff+="pthread_attr_t attr;\n";
+                pthreadStuff+="pthread_attr_init(&attr);\n";
+                pthreadStuff+="pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);\n";
+                FuncGenerator::bodyPrefixStr+=pthreadStuff;
+                if(lastCallInst)
+                {
+                    std::string originalLastFuncCall = specialExclude[lastCallInst];
+                    std::string joinStuff = "for (int i=0; i<";
+                    joinStuff+= boost::lexical_cast<std::string>(numFuncCall)+"; i++) pthread_join(threads[i], NULL);\n";
+                    specialExclude[lastCallInst] = originalLastFuncCall+joinStuff;
+                }
             }
         }
 
