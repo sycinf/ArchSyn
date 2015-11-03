@@ -494,6 +494,8 @@ namespace GenCFunc {
                     // gep instruction and memory reference together...
                     // if there is a chain of gep leading up to the memory
                     // ref, we group them all into the same node
+                    // since the pointer wont be passed between partitions,
+                    // we can be sure this following snippet gets the argument properly
                     if(pointerForRef)
                     {
                         //search backward -- if it is a Gep instruction then we continue

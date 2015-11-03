@@ -133,7 +133,8 @@ void InstructionGraph::addToInstructionGraph(Instruction *I, std::vector<BasicBl
       }
   }
 */
-
+    // if current is load/store/getElement, trace back to its ancestor
+    // it ancestor is also getElement, we make it dependent on me
 
     // we need to look at other kinda dependence --- memory?
     if(I->mayReadFromMemory())
