@@ -135,6 +135,26 @@ void InstructionGraph::addToInstructionGraph(Instruction *I, std::vector<BasicBl
 */
     // if current is load/store/getElement, trace back to its ancestor
     // it ancestor is also getElement, we make it dependent on me
+    Value* pointerVal = 0;
+    if(isa<LoadInst>(*I))
+    {
+        LoadInst& ldInst = cast<LoadInst>(*I);
+        pointerVal = ldInst.getPointerOperand();
+    }
+    else if(isa<StoreInst>(*I))
+    {
+        StoreInst& stInst = cast<StoreInst>(*I);
+        pointerVal = stInst.getPointerOperand();
+    }
+    else if(isa<GetElementPtrInst>(*I))
+    {
+        GetElementPtrInst& gepInst = cast<GetElementPtrInst>(*I);
+        pointerVal = gepInst.getPointerOperand();
+    }
+    if(pointerVal && isa<GetElementPtrInst>(*pointerVal))
+    {
+        Node->addDependentInstruction(getOrInsertInstruction( &cast<Instruction>(*pointerVal)));
+    }
 
     // we need to look at other kinda dependence --- memory?
     if(I->mayReadFromMemory())
