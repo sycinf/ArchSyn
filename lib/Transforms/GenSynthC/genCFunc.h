@@ -13,11 +13,19 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "GenCFuncUtil.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
+#include "llvm/Transforms/GenSynthC/GenSynthC.h"
 #include "GenCInsn.h"
 #include <boost/lexical_cast.hpp>
 #include <iterator>
 using namespace llvm;
 using namespace std;
+#define FUNCBEGIN  "#FUNCBEGIN:"
+#define FUNCEND "#FUNCEND:"
+#define FUNCTCLBEGIN "#FUNCTCLBEGIN:"
+#define FUNCTCLEND "#FUNCTCLEND:"
+#define DIRTCLBEGIN "#DIRECTIVEBEGIN:"
+#define DIRTCLEND "DIRECTIVEEND:"
+
 namespace GenCFunc {
     // two classes for CPU specific implementation
     // things -- how to pack argument
@@ -182,6 +190,11 @@ namespace GenCFunc {
         }
         void generateFunctionDecl()
         {
+            // this is a line another script can parse and extract function
+            std::string tagLine = "//";
+            tagLine += FUNCBEGIN;
+            tagLine += func->getName();
+            printTabbedLines(out_cfile,tagLine);
             // here we just print out the function name and return type,
             // the argument would depend on the actual attribute
             Type* returnType = func->getReturnType();
@@ -214,6 +227,11 @@ namespace GenCFunc {
                     curArgTypeStr = "channel_info<"+curArgTypeStr+">*";
                 else if(argIsChannel)
                     curArgTypeStr = curArgTypeStr+"* ";
+                // now add volatile if necessary
+                if((curFuncArg->hasNoCaptureAttr() || argIsChannel) && !getGeneratingCPU())
+                {
+                    curArgTypeStr = "volatile "+curArgTypeStr;
+                }
 
                 std::string varTypewName = curArgTypeStr+" ";
                 varTypewName += curFuncArg->getName();
@@ -324,6 +342,9 @@ namespace GenCFunc {
 
             addBarSubTabs(false);
             printTabbedLines(out_cfile,"}");
+            std::string endTagLine = "//";
+            endTagLine+=FUNCEND;
+            printTabbedLines(out_cfile,endTagLine);
         }
 
 
@@ -438,6 +459,146 @@ namespace GenCFunc {
             return nameStr;
 
         }
+        void generateHLSDirectiveInComment()
+        {
+            std::string directiveBegin="/*\n";
+            directiveBegin+=DIRTCLBEGIN;
+            std::string funcName = func->getName();
+            printTabbedLines(out_cfile,directiveBegin);
+            // when an argument is used to generate some new
+            // pointer, and then dereferenced, the argument
+            // if we do this naively, we are going to have an
+            // pointer argument, and then some arithmetic
+            std::set<Argument*> dereferenced;
+            for(auto bbIter = func->begin(); bbIter!=func->end(); bbIter++)
+            {
+                BasicBlock* curBB = &(cast<BasicBlock>(*bbIter));
+                for(auto insIter = curBB->begin(); insIter!=curBB->end(); insIter++)
+                {
+                    Instruction& curIns = cast<Instruction>(*insIter);
+                    Value* pointerForRef = 0;
+                    if(isa<LoadInst>(curIns))
+                    {
+                        LoadInst& curLdInst = cast<LoadInst>(curIns);
+                        pointerForRef = curLdInst.getPointerOperand();
+                    }
+                    else if(isa<StoreInst>(curIns))
+                    {
+                        StoreInst& curStInst = cast<StoreInst>(curIns);
+                        pointerForRef = curStInst.getPointerOperand();
+                    }
+                    // FIXME: if the pointer is passed around between
+                    // partitions, its unsynthesizable in vivado hls
+                    // because the pointer of pointer is not supported,
+                    // the fix is to have the decoupling pass grouping
+                    // gep instruction and memory reference together...
+                    // if there is a chain of gep leading up to the memory
+                    // ref, we group them all into the same node
+                    if(pointerForRef)
+                    {
+                        //search backward -- if it is a Gep instruction then we continue
+                        //else we check if it is Argument -- if yes, we have it, else we break
+                        //-- now consider the case when we have an argument which we take in
+                        // a pointer, we need to add an explicit port for access
+                        bool found = isa<Argument>(*pointerForRef);
+                        bool isGep = isa<GetElementPtrInst>(*pointerForRef);
+                        while(!found && isGep)
+                        {
+                            GetElementPtrInst& curGepInst = cast<GetElementPtrInst>(*pointerForRef);
+                            pointerForRef = curGepInst.getPointerOperand();
+                            found = isa<Argument>(*pointerForRef);
+                            isGep = isa<GetElementPtrInst>(*pointerForRef);
+                        }
+                        if(found)
+                        {
+                            Argument* curDerefPter = &cast<Argument>(*pointerForRef);
+                            if(curDerefPter->getParent()==func)
+                                dereferenced.insert(curDerefPter);
+                        }
+                    }
+                }
+
+            }
+            std::string directiveStrHead = "set_directive_interface -mode ";
+            // now we have an array of argument which are dereferenced in the function
+            for(auto argIter = dereferenced.begin(); argIter!= dereferenced.end(); argIter++)
+            {
+                Argument* curArg = *argIter;
+                std::string argumentName = curArg->getName();
+                // check if this argument is a fifo or axi_master
+                unsigned argSeq = curArg->getArgNo();
+                bool isWrChannel = cmpChannelAttr(func->getAttributes(),argSeq,CHANNELWR);
+                bool isRdChannel = cmpChannelAttr(func->getAttributes(),argSeq,CHANNELRD);
+                std::string directiveStr = directiveStrHead;
+                if(isWrChannel || isRdChannel)
+                {
+                    directiveStr+="ap_fifo ";
+
+                }
+                else // we can adjust for many cache by not having separate bundles
+                {
+                    directiveStr+= " m_axi -offset slave -bundle "+argumentName;
+                }
+                directiveStr+=" \""+funcName+"\" "+argumentName;
+                printTabbedLines(out_cfile, directiveStr);
+            }
+            // make all the other argument input
+            for(auto argIter = func->arg_begin(); argIter!=func->arg_end(); argIter++)
+            {
+                Argument* curArg = &cast<Argument>(*argIter);
+                if(dereferenced.count(curArg))
+                    continue;
+                std::string directiveStr = directiveStrHead;
+                directiveStr+=" s_axilite -register \""+funcName+"\" ";
+                directiveStr+=curArg->getName();
+                printTabbedLines(out_cfile,directiveStr);
+            }
+            // lastly, add the control port for the whole thing
+            std::string entityControlDir = directiveStrHead;
+            entityControlDir+= " s_axilite -register \""+funcName+"\"";
+            printTabbedLines(out_cfile,entityControlDir);
+
+            std::string directiveEnd=DIRTCLEND;
+            directiveEnd+="\n*/";
+            printTabbedLines(out_cfile,directiveEnd);
+
+
+        }
+
+        void generateHLSTclInComment()
+        {
+            //generate tcl start tagline
+            std::string tclBegin = "/*\n";
+            tclBegin+=FUNCTCLBEGIN;
+            printTabbedLines(out_cfile,tclBegin);
+            std::string funcTop = func->getName();
+            std::string actualTcl = "open_project "+funcTop+"\n";
+            actualTcl+="set_top "+funcTop+"\n";
+            actualTcl+="add_files "+funcTop+".cpp\n";
+            actualTcl+="open_solution \"solution1\"\n";
+
+            actualTcl+="set_part {";
+            actualTcl+=HLSFPGA;
+            actualTcl+="}\n";
+
+            actualTcl+="create_clock -period ";
+            actualTcl+=HLSFPGA_CLKPERIOD;
+            actualTcl+=" -name default\n";
+            actualTcl+="set_clock_uncertainty ";
+            actualTcl+=HLSFPGA_CLKUNCERTAIN;
+            actualTcl+="\n";
+
+            actualTcl+="config_compile -name_max_length 60 -pipeline_loops 1\n";
+
+            actualTcl+="source \"./directive.tcl\"\n";
+            actualTcl+="csynth_design\n";
+            actualTcl+="export_design -format ip_catalog\n";
+            printTabbedLines(out_cfile,actualTcl);
+
+            std::string tclEnd =  FUNCTCLEND;
+            tclEnd+="\n*/";
+            printTabbedLines(out_cfile,tclEnd);
+        }
 
         void generateCPUThreadWrapper()
         {
@@ -521,6 +682,16 @@ namespace GenCFunc {
             {
                 declareInputStructPack();
                 generateCPUThreadWrapper();
+            }
+            else
+            {
+                // generate the tcl script for generating the accelerator
+                // in vivado hls -- the tcl script is in the comment
+                generateHLSTclInComment();
+                // directive tcl, dealing with how to specify each memory interface
+                // we check each memory read/write port, if they are not CHANNELWR/CHANNELRD
+                // then they are axi master memory interface, else they are fifo
+                generateHLSDirectiveInComment();
             }
 
         }

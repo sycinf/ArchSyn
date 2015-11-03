@@ -43,7 +43,8 @@ namespace {
         (*out_c).write_escaped(M.getName()) << '\n';
         if(getGeneratingCPU())
             (*out_c) << "#include \"comm.h\"\n ";
-
+        else
+            (*out_c) << "#include \"ap_int.h\"\n ";
         std::vector<NormalCFuncGenerator*> normalFuncGenerators;
         std::vector<PipelinedCFuncGenerator*> pipelineFuncGenerators;
         for(auto funcIter = M.begin(); funcIter!=M.end(); funcIter++)
@@ -87,27 +88,3 @@ ModulePass *llvm::createGenSynthCPass(llvm::raw_ostream &OS, bool targetCPU)
 
 
 
-/*namespace {
-  // Hello2 - The second implementation with getAnalysisUsage implemented.
-  struct Hello2 : public FunctionPass {
-    static char ID; // Pass identification, replacement for typeid
-    Hello2() : FunctionPass(ID) {}
-
-    bool runOnFunction(Function &F) override {
-      ++HelloCounter;
-      errs() << "Hello: ";
-      errs().write_escaped(F.getName()) << '\n';
-      return false;
-    }
-
-    // We don't modify the program, so we preserve all analyses.
-    void getAnalysisUsage(AnalysisUsage &AU) const override {
-      AU.setPreservesAll();
-    }
-  };
-}
-
-char Hello2::ID = 0;
-static RegisterPass<Hello2>
-Y("hello2", "Hello World Pass (with getAnalysisUsage implemented)");
-*/

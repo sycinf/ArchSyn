@@ -53,6 +53,27 @@ namespace GenCFunc {
             {
                 std::string rtVarName = generateVariableName(insn);
                 std::string varType=getLLVMTypeStr(insn->getType());
+                if(isa<GetElementPtrInst>(*insn))
+                {
+                    GetElementPtrInst* curGep = &cast<GetElementPtrInst>(*insn);
+                    Value* pointerVal = curGep->getPointerOperand();
+                    bool foundArg = isa<Argument>(*pointerVal);
+                    bool isGepIns = isa<GetElementPtrInst>(*pointerVal);
+                    while(!foundArg && isGepIns)
+                    {
+                        curGep = &cast<GetElementPtrInst>(*pointerVal);
+                        pointerVal = curGep->getPointerOperand();
+                        foundArg = isa<Argument>(*pointerVal);
+                        isGepIns = isa<GetElementPtrInst>(*pointerVal);
+                    }
+                    if(foundArg)
+                    {
+                        Argument* curArg = &cast<Argument>(*pointerVal);
+                        if(curArg->hasNoCaptureAttr())
+                            varType= "volatile "+varType;
+                    }
+
+                }
                 rtStr = varType+" "+rtVarName+";";
             }
             return rtStr;
