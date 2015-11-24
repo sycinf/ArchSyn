@@ -16,6 +16,7 @@
 #include "llvm/Transforms/GenSynthC/GenSynthC.h"
 #include "GenCInsn.h"
 #include <boost/lexical_cast.hpp>
+#include <boost/algorithm/string.hpp>
 #include <iterator>
 using namespace llvm;
 using namespace std;
@@ -24,8 +25,9 @@ using namespace std;
 #define FUNCTCLBEGIN "#FUNCTCLBEGIN:"
 #define FUNCTCLEND "#FUNCTCLEND:"
 #define DIRTCLBEGIN "#DIRECTIVEBEGIN:"
-#define DIRTCLEND "DIRECTIVEEND:"
-
+#define DIRTCLEND "#DIRECTIVEEND:"
+#define DRIVERBEGIN "#DRIVERBEGIN:"
+#define DRIVEREND "#DRIVEREND:"
 namespace GenCFunc {
     // two classes for CPU specific implementation
     // things -- how to pack argument
@@ -347,11 +349,19 @@ namespace GenCFunc {
             printTabbedLines(out_cfile,endTagLine);
         }
 
+    };
+    class HLSTopLevelGenerator
+    {
+    public:
+        HLSTopLevelGenerator(){};
+        std::string generateDefaultTopLevelTcl()
+        {
+            // this is to instantiate the default PS ip
 
-
-
+        }
 
     };
+
     class PipelinedCFuncGenerator:FuncGenerator{
     public:
         PipelinedCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os){}
@@ -399,6 +409,12 @@ namespace GenCFunc {
 
                     }
                 }
+                else
+                {
+                    // hls: we need to connect all the pipeline stages....
+                    // all the tcl stuff for connecting things
+
+                }
             }
             if(getGeneratingCPU())
             {
@@ -417,6 +433,11 @@ namespace GenCFunc {
                     specialExclude[lastCallInst] = originalLastFuncCall+joinStuff;
                 }
             }
+            else
+            {
+                // make all the driver stuff -----
+                //
+            }
         }
 
         void generateFunction()
@@ -429,14 +450,18 @@ namespace GenCFunc {
     };
     class NormalCFuncGenerator:FuncGenerator{
 
+
+        std::set<Argument*> funcArg2BeInitialized;
+        // this is specifically for those memory accessing
+        // argument -- we need to supply the offset
+        std::set<Argument*> funcArg2BeInitialized_offset;
+
+
         std::string generateInputStructType()
         {
             int funcSeqNum = getFuncSeq(this->func);
             return generateInputPackStructType(funcSeqNum);
         }
-
-    public:
-        NormalCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os){}
 
         std::string getPackageArgType(Argument* curArg)
         {
@@ -467,8 +492,6 @@ namespace GenCFunc {
             printTabbedLines(out_cfile,directiveBegin);
             // when an argument is used to generate some new
             // pointer, and then dereferenced, the argument
-            // if we do this naively, we are going to have an
-            // pointer argument, and then some arithmetic
             std::set<Argument*> dereferenced;
             for(auto bbIter = func->begin(); bbIter!=func->end(); bbIter++)
             {
@@ -540,6 +563,7 @@ namespace GenCFunc {
                 else // we can adjust for many cache by not having separate bundles
                 {
                     directiveStr+= " m_axi -offset slave -bundle "+argumentName;
+                    funcArg2BeInitialized_offset.insert(curArg);
                 }
                 directiveStr+=" \""+funcName+"\" "+argumentName;
                 printTabbedLines(out_cfile, directiveStr);
@@ -550,6 +574,7 @@ namespace GenCFunc {
                 Argument* curArg = &cast<Argument>(*argIter);
                 if(dereferenced.count(curArg))
                     continue;
+                funcArg2BeInitialized.insert(curArg);
                 std::string directiveStr = directiveStrHead;
                 directiveStr+=" s_axilite -register \""+funcName+"\" ";
                 directiveStr+=curArg->getName();
@@ -563,8 +588,6 @@ namespace GenCFunc {
             std::string directiveEnd=DIRTCLEND;
             directiveEnd+="\n*/";
             printTabbedLines(out_cfile,directiveEnd);
-
-
         }
 
         void generateHLSTclInComment()
@@ -675,6 +698,81 @@ namespace GenCFunc {
             addBarSubTabs(false);
             printTabbedLines(out_cfile,"};");
         }
+        void generateCurFunctionDriver()
+        {
+
+            // for normal function, the driver consists of
+            // the standard instantiation of various things
+            printTabbedLines(out_cfile,"/*");
+            printTabbedLines(out_cfile,DRIVERBEGIN);
+
+            std::string deviceName = "X";
+            std::string funcName=func->getName();
+            deviceName+=funcName;
+            deviceName.at(1)=toupper(deviceName.at(1));
+            std::string deviceVarName = funcName+"_dev";
+            std::string deviceDec = deviceName+" "+deviceVarName+";";
+
+            std::string driverHeader= deviceName+".h";
+            boost::algorithm::to_lower(driverHeader);
+            printTabbedLines(out_cfile,"#include \""+driverHeader+"\"");
+
+            printTabbedLines(out_cfile,deviceDec);
+
+            std::string setupDevice="void setup"+funcName+"_dev(";
+            // need to figure out the argument used for intializing
+            // we have kept track of those worthy of initializing when
+            // we were generating the tcl file for creating accelerator
+            // interface
+            std::string argumentStr="";
+            for(auto argIter = func->arg_begin(); argIter!=func->arg_end();argIter++ )
+            {
+                Argument* curArg = &cast<Argument>(*argIter);
+                if(!funcArg2BeInitialized.count(curArg) && !funcArg2BeInitialized_offset.count(curArg))
+                    continue;
+                if(argumentStr!="")
+                    argumentStr+=",";
+                argumentStr+=getLLVMTypeStr(curArg->getType(),true);
+                argumentStr+=" ";
+                argumentStr+=curArg->getName();
+            }
+            setupDevice+=argumentStr+")";
+            printTabbedLines(out_cfile,setupDevice);
+            printTabbedLines(out_cfile,"{");
+            addBarSubTabs(true);
+
+            printTabbedLines(out_cfile,"int status="+deviceName+"_Initialize(&"+deviceVarName+",0);");
+            printTabbedLines(out_cfile, "if(status!=XST_SUCCESS)xil_printf(\"cannot initialize "+ deviceName +"\");");
+            std::set<Argument*> all2BeInited;
+            all2BeInited.insert(funcArg2BeInitialized.begin(),funcArg2BeInitialized.end());
+            all2BeInited.insert(funcArg2BeInitialized_offset.begin(),funcArg2BeInitialized_offset.end());
+
+            for(auto argPtrIter = all2BeInited.begin();
+                argPtrIter!=all2BeInited.end();
+                argPtrIter++)
+            {
+                Argument* initArg = *argPtrIter;
+                std::string setDevArgFn = deviceName+"_Set_";
+                setDevArgFn+=initArg->getName();
+                if(funcArg2BeInitialized_offset.count(initArg))
+                    setDevArgFn+="_offset";
+                setDevArgFn+="(&"+deviceVarName+","+"(u32)";
+                setDevArgFn+=initArg->getName();
+                setDevArgFn+=");";
+                printTabbedLines(out_cfile,setDevArgFn);
+            }
+
+            addBarSubTabs(false);
+            printTabbedLines(out_cfile,"}");
+            printTabbedLines(out_cfile,DRIVEREND);
+            printTabbedLines(out_cfile,"*/");
+
+        }
+
+
+    public:
+        NormalCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os){}
+
 
         void generateFunction()
         {
@@ -694,6 +792,13 @@ namespace GenCFunc {
                 // we check each memory read/write port, if they are not CHANNELWR/CHANNELRD
                 // then they are axi master memory interface, else they are fifo
                 generateHLSDirectiveInComment();
+                // generate driver for snippet driving this accelerator
+                // it consists of initialize the core, and write things into the control
+                // registers -- note for the top level (pipelineFunction), we just need
+                // to call each of these function, and poll for each to finish
+                generateCurFunctionDriver();
+
+
             }
 
         }

@@ -159,8 +159,12 @@ std::string generateFifoChannelInfoName(Instruction* insn, User* user)
 
 }
 
-std::string getLLVMTypeStr(Type *Ty) {
+std::string getLLVMTypeStr(Type *Ty, bool forceCPU = false) {
   bool cpuInt=getGeneratingCPU();
+  // this is a hacky solution so we use
+  // cpu types in driver generation under hls flow
+  if(forceCPU)
+      cpuInt = true;
   switch (Ty->getTypeID()) {
       case Type::VoidTyID:      return "void";
       case Type::HalfTyID:      return "half";
@@ -212,14 +216,14 @@ std::string getLLVMTypeStr(Type *Ty) {
       }
       case Type::PointerTyID: {
         Type* ptedType = Ty->getPointerElementType();
-        std::string ptedTypeStr = getLLVMTypeStr(ptedType);
+        std::string ptedTypeStr = getLLVMTypeStr(ptedType,forceCPU);
         std::string ptrType = ptedTypeStr+"*";
         return ptrType;
       }
       case Type::ArrayTyID: {
         ArrayType *ATy = cast<ArrayType>(Ty);
         Type* arrElementType = ATy->getElementType();
-        std::string elementTypeStr = getLLVMTypeStr(arrElementType);
+        std::string elementTypeStr = getLLVMTypeStr(arrElementType,forceCPU);
         std::string arrayTypeStr = elementTypeStr+"["+boost::lexical_cast<std::string>(ATy->getNumElements())+"]";
         return arrayTypeStr;
       }
