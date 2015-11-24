@@ -128,7 +128,13 @@ bool isArgChannel(Argument* curFuncArg)
     return isWrChannel || isRdChannel;
 }
 
-
+static std::string generateVivadoStartEndGroupStr(std::string content)
+{
+    std::string realStr = "startgroup\n";
+    realStr+=content;
+    realStr+="\nendgroup\n";
+    return realStr;
+}
 
 static std::string generateVariableName(Instruction* ins)
 {

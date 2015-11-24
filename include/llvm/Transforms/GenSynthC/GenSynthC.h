@@ -5,10 +5,15 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
-#define HLSFPGA "xc7z020clg484-1"
 #define HLSFPGA_CLKPERIOD "8"
 #define HLSFPGA_CLKUNCERTAIN "0.5"
-
+// whole bunch of zynq zedboard specific things
+#define HLSFPGA "xc7z020clg484-1"
+#define HLSZEDBOARD "em.avnet.com:zed:part0:1.3"
+#define HLSPSIPName "xilinx.com:ip:processing_system7"
+#define HLSPSIPVersion "5.5"
+#define HLSPSIPInstName "processing_sys7"
+#define HLSBDRULE "xilinx.com:bd_rule:processing_system7 -config {make_external \"FIXED_IO, DDR\" apply_board_preset \"1\" Master \"Disable\" Slave \"Disable\" }"
 namespace llvm{
     ModulePass* createGenSynthCPass(llvm::raw_ostream &OS,bool targetCPU);
 }

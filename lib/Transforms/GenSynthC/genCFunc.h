@@ -350,6 +350,8 @@ namespace GenCFunc {
         }
 
     };
+
+
     class HLSTopLevelGenerator
     {
     public:
@@ -357,15 +359,69 @@ namespace GenCFunc {
         std::string generateDefaultTopLevelTcl()
         {
             // this is to instantiate the default PS ip
+            std::string commonDir =  HLSDIRVARNAME;
+            std::string createPro = "create_project project_1 $"+commonDir+"/vivado/project_1 -part ";
+            createPro+=HLSFPGA;
+            createPro+="\n";
+            createPro+="set_property board_part ";
+            createPro+=HLSZEDBOARD;
+            createPro+= "[current_project]\n";
+            createPro+= "create_bd_design \"design_1\"\n";
+
+            std::string instPS = "create_db_cell -type ip -vlnv ";
+            instPS+=HLSPSIPName;
+            instPS+=":";
+            instPS+=HLSPSIPVersion;
+            instPS+=" ";
+            instPS+=HLSPSIPInstName;
+
+            instPS = generateVivadoStartEndGroupStr(instPS);
+            instPS+="apply_bd_automation ";
+            instPS+=HLSBDRULE;
+            instPS+="[get_bd_cells ";
+            instPS+=HLSPSIPInstName;
+            instPS+="]\n";
+            // now got to set IPRepo path
+
+            std::string ipRepoPath = "$";
+            ipRepoPath+= commonDir+"/vivado_hls [current_project]\n";
+            ipRepoPath+="update_ip_catalog\n";
+
+            // now's the part where all the stage ipcores are instantiated
+            // for that we'll need the name of the called functions
+
+
 
         }
+        void addStageFunction(Function* stageFunc)
+        {
+            hlsCores.push_back(stageFunc);
+        }
 
+    private:
+        std::vector<Function*> hlsCores;
+
+    };
+    class HLSFifoGenerator
+    {
+    public:
+        HLSFifoGenerator(){};
+        std::string generateHLSFifoTcl()
+        {
+
+        }
     };
 
     class PipelinedCFuncGenerator:FuncGenerator{
     public:
-        PipelinedCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os){}
-        void generateChannelAllocation()
+        PipelinedCFuncGenerator(Function* f, raw_ostream& os):FuncGenerator(f,os)
+        {
+            if(!getGeneratingCPU())
+            {
+                hlsTG = new HLSTopLevelGenerator();
+            }
+        }
+        void generateChannelAllocaStageExec()
         {
             // iterate through the alloca in the entry block, and make them exclude
             BasicBlock& myOnlyBlock = func->getEntryBlock();
@@ -413,6 +469,27 @@ namespace GenCFunc {
                 {
                     // hls: we need to connect all the pipeline stages....
                     // all the tcl stuff for connecting things
+                    // this include
+                    if(isa<AllocaInst>(*insIter))
+                    {
+                        // declare the channel object
+                        AllocaInst* ai = &(cast<AllocaInst>(*insIter));
+                        // got to make fifo
+                        //CPUChannelGenerator ccg(ai);
+                        //string channelStr=ccg.generateChannelStr();
+                        //FuncGenerator::bodyPrefixStr+=channelStr+"\n";
+                        //specialExclude[insIter]="";
+                    }
+                    else if (isa<CallInst>(*insIter))
+                    {
+                        CallInst* curCallInst = &cast<CallInst>(*insIter);
+                        Function* calledFunc = curCallInst->getCalledFunction();
+                        // give the function name to the hls top level generator
+                        hlsTG->addStageFunction(calledFunc);
+                        // setup the core, and start it -- with appropriate
+                        // argument
+                        specialExclude[insIter]="";
+                    }
 
                 }
             }
@@ -439,14 +516,39 @@ namespace GenCFunc {
                 //
             }
         }
+        void generateHLSTopLevelInComment()
+        {
+            // create the cores -- the stages
+            // should be a set of standard libraries
+            // assume common_anc_dir is defined
+            std::string hlsTopLevel = hlsTG->generateDefaultTopLevelTcl();
+
+            // create the fifos
+
+            // connect the cores and fifos
+        }
 
         void generateFunction()
         {
             FuncGenerator::generateFunctionDecl();
-            generateChannelAllocation();
+            generateChannelAllocaStageExec();
             FuncGenerator::generateFunctionBody();
+            if(!getGeneratingCPU())
+            {
+                generateHLSTopLevelInComment();
+            }
 
         }
+    private:
+        // we need a HLS top level generator
+        // a vector of fifo generator for each channel
+        // the actual function body then just consists of
+        // initializing every stage, and start them
+        // note the alloca instructions are all replaced
+        // with nothing, the call instructions are replaced
+        // with core_setup call and core start call
+        HLSTopLevelGenerator* hlsTG;
+        std::vector<HLSFifoGenerator*> hlsFifoG;
     };
     class NormalCFuncGenerator:FuncGenerator{
 

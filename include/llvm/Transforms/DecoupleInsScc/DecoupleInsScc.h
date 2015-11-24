@@ -13,6 +13,7 @@ using namespace llvm;
 #define CHANNELWR "dpp-channel-wr"
 #define CHANNELRD "dpp-channel-rd"
 #define NORMALARGATTR "dpp-normalArg"
+#define HLSDIRVARNAME "common_anc_dir"
 namespace llvm{
     FunctionPass* createDecoupleInsSccPass(bool cfDup);
 
