@@ -29,6 +29,87 @@ using namespace std;
 #define DRIVERBEGIN "#DRIVERBEGIN:"
 #define DRIVEREND "#DRIVEREND:"
 namespace GenCFunc {
+
+    // this two keeps track of if argument should be
+    // turned into axi master or fifo ports
+    // these would only be used when we are generating
+    // HLS tcl files
+    static std::set<Argument*> arg2axim;
+    static std::set<Argument*> arg2fifoW;
+    static std::set<Argument*> arg2fifoR;
+
+    class AxiInterconnectGenerator{
+    public:
+
+
+        static std::string generateSingleInterfaceConnection(std::string master, std::string slave)
+        {
+            std::string connectInterfaces = "";
+            connectInterfaces+="connect_bd_intf_net -boundary_type upper ";
+            connectInterfaces+="[get_bd_intf_pins ";
+            connectInterfaces+=master;
+            connectInterfaces+="] ";
+            connectInterfaces+="[get_bd_intf_pins ";
+            connectInterfaces+=slave;
+            connectInterfaces+="]\n";
+            return connectInterfaces;
+
+        }
+
+        static std::string generateAxiConnect(
+                                              std::vector<std::string>& masterPorts,
+                                              std::vector<std::string>& slavePorts,
+                                              int counter)
+        {
+            int slaveNum = masterPorts.size();
+            int masterNum = slavePorts.size();
+            std::string instantiation="create_bd_cell -type ip -vlnv ";
+            instantiation+=XILINXIPPREFIX;
+            instantiation+="axi_interconnect:";
+            instantiation+=XILINXINTCONVERSION;
+            instantiation+=" ";
+            std::string instanceName = "axi_interconnect_"+boost::lexical_cast<std::string>(counter);
+
+            instantiation+=instanceName;
+            instantiation=generateVivadoStartEndGroupStr(instantiation);
+            std::string setPortNum = "set_property -dict [list CONFIG.NUM_SI {"+
+                    boost::lexical_cast<std::string>(slaveNum)
+                    +"} CONFIG.NUM_MI {"+
+                    boost::lexical_cast<std::string>(masterNum)
+                    +"}] [get_bd_cells "+instanceName+"]\n";
+            // masterPorts are connected to slave ports of the instantiated axi
+            std::string connectInterfaces="";
+            int axiSlavePortCounter = 0;
+            for(auto masterPortIter = masterPorts.begin(); masterPortIter!= masterPorts.end(); masterPortIter++ )
+            {
+                std::string curMasterPort = *masterPortIter;
+                std::string axiSlavePortStr =instanceName+"/S";
+                if(axiSlavePortCounter<10)
+                    axiSlavePortStr+="0";
+                axiSlavePortStr+=boost::lexical_cast<std::string>(axiSlavePortCounter);
+                axiSlavePortCounter++;
+                axiSlavePortStr+="_AXI";
+
+                connectInterfaces+=generateSingleInterfaceConnection(curMasterPort,axiSlavePortStr);
+            }
+            int axiMasterPortCounter = 0;
+            for(auto slavePortIter=slavePorts.begin(); slavePortIter!=slavePorts.end(); slavePortIter++)
+            {
+                std::string curSlavePort = *slavePortIter;
+                std::string axiMasterPortStr = instanceName+"/M";
+                if(axiMasterPortCounter<10)
+                    axiMasterPortStr+="0";
+                axiMasterPortStr+=boost::lexical_cast<std::string>(axiMasterPortCounter);
+                axiMasterPortCounter++;
+                axiMasterPortStr+="_AXI";
+                connectInterfaces+=generateSingleInterfaceConnection(curSlavePort,axiMasterPortStr);
+            }
+            return instantiation+setPortNum+connectInterfaces;
+        }
+
+
+    };
+
     // two classes for CPU specific implementation
     // things -- how to pack argument
     class CPUChannelGenerator{
@@ -355,7 +436,9 @@ namespace GenCFunc {
     class HLSTopLevelGenerator
     {
     public:
-        HLSTopLevelGenerator(){};
+        HLSTopLevelGenerator()
+        {
+        }
         std::string generateDefaultTopLevelTcl()
         {
             // this is to instantiate the default PS ip
@@ -365,7 +448,7 @@ namespace GenCFunc {
             createPro+="\n";
             createPro+="set_property board_part ";
             createPro+=HLSZEDBOARD;
-            createPro+= "[current_project]\n";
+            createPro+= " [current_project]\n";
             createPro+= "create_bd_design \"design_1\"\n";
 
             std::string instPS = "create_db_cell -type ip -vlnv ";
@@ -383,33 +466,146 @@ namespace GenCFunc {
             instPS+="]\n";
             // now got to set IPRepo path
 
-            std::string ipRepoPath = "$";
-            ipRepoPath+= commonDir+"/vivado_hls [current_project]\n";
-            ipRepoPath+="update_ip_catalog\n";
+            std::string setIpRepoPath = "set_property ip_repo_paths $";
+            setIpRepoPath+= commonDir+"/vivado_hls [current_project]\n";
+            setIpRepoPath+="update_ip_catalog\n";
 
             // now's the part where all the stage ipcores are instantiated
             // for that we'll need the name of the called functions
+            //FIXME: add the code to instantiate cores
+            std::string instantiateCores="";
+            //std::vector<std::string> coreInstances;
+            std::vector<std::string> slavePorts;
+            for(auto coreIter = hlsCores.begin(); coreIter!=hlsCores.end(); coreIter++)
+            {
+                CallInst* curCallInst = *coreIter;
+                std::string functionName = curCallInst->getCalledFunction()->getName();
 
+                std::string generateCurCore = "create_bd_cell -type ip -vlnv ";
+                generateCurCore+=HLSIPPREFIX;
+                generateCurCore+=functionName+":1.0";
+                generateCurCore+=" ";
+                std::string coreInstanceName = functionName+"_0";
+
+                generateCurCore+=coreInstanceName;
+
+                slavePorts.push_back(coreInstanceName+"/s_axi_AXILiteS");
+
+                instantiateCores+=generateVivadoStartEndGroupStr(generateCurCore);
+            }
+            // the master port will be the processing system's gp port
+            std::string controlMasterPort = HLSPSIPInstName;
+            controlMasterPort+="/M_AXI_GP0";
+            std::vector<std::string> masterPorts;
+            masterPorts.push_back(controlMasterPort);
+            int axiCounter = 0;
+            // the control interconnect
+            std::string controlAxiInterconnect = AxiInterconnectGenerator::generateAxiConnect(masterPorts,slavePorts,axiCounter);
+            axiCounter++;
+            std::string connectAxiM="";
+            // this is the part where we connect to aximaster -- we do first ACP
+            // and the IP masterPorts with the name "m_axi_"+argumentName
+            std::vector<std::string> maxiMasterPorts;
+
+            if(arg2axim.size()!=0)
+            {
+                connectAxiM+="set_property -dict [list CONFIG.PCW_USE_S_AXI_ACP {1}] [get_bd_cells ";
+                connectAxiM+=HLSPSIPInstName;
+                connectAxiM+="]\n";
+                for(auto arg2aximIter = arg2axim.begin(); arg2aximIter!=arg2axim.end(); arg2aximIter++)
+                {
+                    Argument* curArg = *arg2aximIter;
+                    std::string funcName = curArg->getParent()->getName();
+                    std::string instanceName = funcName+"_0";
+                    std::string portName = "m_axi_";
+                    portName+=curArg->getName();
+
+                    std::string completePortName = instanceName+"/"+portName;
+                    maxiMasterPorts.push_back(completePortName);
+                }
+            }
+            std::vector<std::string> maxiSlavePorts;
+            std::string acpStr = HLSPSIPInstName;
+            acpStr += "/S_AXI_ACP";
+            maxiSlavePorts.push_back(acpStr);
+
+
+            std::string maxiInterconnect = AxiInterconnectGenerator::generateAxiConnect(maxiMasterPorts, maxiSlavePorts, axiCounter);
+
+
+            return createPro+instPS+setIpRepoPath+instantiateCores+controlAxiInterconnect+
+                    connectAxiM+maxiInterconnect;
 
 
         }
-        void addStageFunction(Function* stageFunc)
+        void addStageFunction(CallInst* stageFunc)
         {
             hlsCores.push_back(stageFunc);
         }
+        std::string setupCores()
+        {
+            std::string setupStr = "";
+            for(auto funcIter= hlsCores.begin(); funcIter!=hlsCores.end();funcIter++)
+            {
+                setupStr+="setup";
+                CallInst* curCallInst = *funcIter;
+                std::string functionName = curCallInst->getCalledFunction()->getName();
+                setupStr += functionName+"(";
+
+                // do the setup -- we check the argument of the called function
+                // if it is using Argument from a higher level function, we pass it in
+                bool addedPrevArg = false;
+                for(auto opIter = curCallInst->op_begin(); opIter!=curCallInst->op_end(); opIter++)
+                {
+                    Value* curOperand = *opIter;
+                    if(isa<Argument>(*curOperand))
+                    {
+                        Argument* curArg = &cast<Argument>(*curOperand);
+                        std::string argName = curArg->getName();
+                        if(addedPrevArg)
+                            setupStr+=",";
+                        else
+                            addedPrevArg = true;
+                        setupStr+=argName;
+                    }
+                }
+                setupStr +=");\n";
+            }
+            return setupStr;
+        }
+        std::string runCores(bool addMeasuringTime)
+        {
+            //FIXME: got to make the actual start string
+            return "";
+        }
 
     private:
-        std::vector<Function*> hlsCores;
+        std::vector<CallInst*> hlsCores;
 
     };
     class HLSFifoGenerator
     {
     public:
-        HLSFifoGenerator(){};
+        HLSFifoGenerator(std::vector<Argument*>* ua)
+        {
+            userArguments = ua;
+        }
+
+        ~HLSFifoGenerator()
+        {
+            userArguments->clear();
+            delete userArguments;
+        }
+
         std::string generateHLSFifoTcl()
         {
-
+            //FIXME: need to instantiate FIFO and connect them
+            return "";
         }
+    private:
+        // things to handle in fifo generation
+        // read
+        std::vector<Argument*>* userArguments;
     };
 
     class PipelinedCFuncGenerator:FuncGenerator{
@@ -474,20 +670,45 @@ namespace GenCFunc {
                     {
                         // declare the channel object
                         AllocaInst* ai = &(cast<AllocaInst>(*insIter));
-                        // got to make fifo
-                        //CPUChannelGenerator ccg(ai);
-                        //string channelStr=ccg.generateChannelStr();
-                        //FuncGenerator::bodyPrefixStr+=channelStr+"\n";
-                        //specialExclude[insIter]="";
+                        // we will need to figure out who is writing to this
+                        // fifo, who is reading from it, and give it to the HLS
+                        // fifo gen -- note both the reader and the writer
+                        // will CallInst, so we will need to figure out the
+                        // argument in the function -- so later we can
+                        // make the connection properly
+                        std::vector<Argument*>* userArguments = new std::vector<Argument*>();
+                        for(auto userIter = ai->user_begin(); userIter!= ai->user_end(); userIter++)
+                        {
+                            if(isa<CallInst>(*userIter))
+                            {
+                                CallInst* curCallInst = &cast<CallInst>(**userIter);
+                                // check seq of the arg operand
+                                // and then figure out the argument
+                                auto invokedFuncArgIter = curCallInst->getCalledFunction()->arg_begin();
+                                for(auto operandIter = curCallInst->op_begin();
+                                        operandIter!=curCallInst->op_end() ;operandIter++, invokedFuncArgIter++)
+                                {
+                                    if(*operandIter==ai)
+                                    {
+                                        Argument* involvedArg = &cast<Argument>(*invokedFuncArgIter);
+                                        userArguments->push_back(involvedArg);
+                                        errs()<<involvedArg->getName()<<"\n";
+                                    }
+                                }
+                            }
+                        }
+                        HLSFifoGenerator* curFifoGen = new HLSFifoGenerator(userArguments);
+                        hlsFifoG.push_back(curFifoGen);
+
+                        specialExclude[insIter]="";
                     }
                     else if (isa<CallInst>(*insIter))
                     {
                         CallInst* curCallInst = &cast<CallInst>(*insIter);
-                        Function* calledFunc = curCallInst->getCalledFunction();
+
                         // give the function name to the hls top level generator
-                        hlsTG->addStageFunction(calledFunc);
-                        // setup the core, and start it -- with appropriate
-                        // argument
+                        hlsTG->addStageFunction(curCallInst);
+
                         specialExclude[insIter]="";
                     }
 
@@ -513,6 +734,13 @@ namespace GenCFunc {
             else
             {
                 // make all the driver stuff -----
+                // this include the timing measurement stuff?
+                // all that would be placed in prefix
+                std::string setupStr = hlsTG->setupCores();
+                std::string runStr = hlsTG->runCores(false);
+                FuncGenerator::bodyPrefixStr +=setupStr;
+                FuncGenerator::bodyPrefixStr +="\n";
+                FuncGenerator::bodyPrefixStr += runStr;
                 //
             }
         }
@@ -521,11 +749,28 @@ namespace GenCFunc {
             // create the cores -- the stages
             // should be a set of standard libraries
             // assume common_anc_dir is defined
+            // also these cores, if they have axim connection
+            // to memory, they will need to be connected to axi interconnect
             std::string hlsTopLevel = hlsTG->generateDefaultTopLevelTcl();
 
-            // create the fifos
+            std::string fifoInst ="";
+            // create the fifos -- and connect to the cores by doing all the look up
+            for(auto fifoGenIter = this->hlsFifoG.begin(); fifoGenIter!= hlsFifoG.end(); fifoGenIter++)
+            {
+                HLSFifoGenerator* curFifoGen = *fifoGenIter;
+                fifoInst+=curFifoGen->generateHLSFifoTcl();
+            }
 
-            // connect the cores and fifos
+            std::string directiveBegin="/*\n";
+            directiveBegin+=DIRTCLBEGIN;
+            printTabbedLines(out_cfile,directiveBegin);
+            printTabbedLines(out_cfile,hlsTopLevel);
+            printTabbedLines(out_cfile,fifoInst);
+            std::string directiveEnd=DIRTCLEND;
+            directiveEnd+="\n*/";
+            printTabbedLines(out_cfile,directiveEnd);
+
+
         }
 
         void generateFunction()
@@ -660,12 +905,16 @@ namespace GenCFunc {
                 if(isWrChannel || isRdChannel)
                 {
                     directiveStr+="ap_fifo ";
-
+                    if (isWrChannel)
+                        arg2fifoW.insert(curArg);
+                    else
+                        arg2fifoR.insert(curArg);
                 }
                 else // we can adjust for many cache by not having separate bundles
                 {
                     directiveStr+= " m_axi -offset slave -bundle "+argumentName;
                     funcArg2BeInitialized_offset.insert(curArg);
+                    arg2axim.insert(curArg);
                 }
                 directiveStr+=" \""+funcName+"\" "+argumentName;
                 printTabbedLines(out_cfile, directiveStr);

@@ -14,6 +14,10 @@ using namespace llvm;
 #define HLSPSIPVersion "5.5"
 #define HLSPSIPInstName "processing_sys7"
 #define HLSBDRULE "xilinx.com:bd_rule:processing_system7 -config {make_external \"FIXED_IO, DDR\" apply_board_preset \"1\" Master \"Disable\" Slave \"Disable\" }"
+#define HLSIPPREFIX "xilinx.com:hls:"
+#define XILINXIPPREFIX "xilinx.com:ip:"
+#define XILINXINTCONVERSION "2.1"
+
 namespace llvm{
     ModulePass* createGenSynthCPass(llvm::raw_ostream &OS,bool targetCPU);
 }
