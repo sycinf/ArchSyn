@@ -431,16 +431,33 @@ namespace GenCFunc {
         {
             CallInst& ci = cast<CallInst>(*insn);
             Function* callee = ci.getCalledFunction();
-            std::string callOpStr = callee->getName();
-            callOpStr+="(";
-            for(unsigned i = 0; i<ci.getNumArgOperands(); i++)
+            std::string varName = generateVariableName(insn);
+            std::string callOpStr = "";
+            if(!callee->getReturnType()->isVoidTy())
             {
-                Value* curOp = ci.getArgOperand(i);
-                callOpStr+=generateOperandStr(curOp);
-                if(i!=ci.getNumArgOperands()-1)
-                    callOpStr+=",";
+                callOpStr+=varName;
+                callOpStr+="=";
             }
-            callOpStr+=");";
+
+            if(getGeneratingCPU())
+            {
+                callOpStr+= callee->getName();
+                callOpStr+="(";
+                for(unsigned i = 0; i<ci.getNumArgOperands(); i++)
+                {
+                    Value* curOp = ci.getArgOperand(i);
+                    callOpStr+=generateOperandStr(curOp);
+                    if(i!=ci.getNumArgOperands()-1)
+                        callOpStr+=",";
+                }
+                callOpStr+=");";
+            }
+            else
+            {
+                callOpStr+=generateDeviceName(callee);
+                callOpStr+="_Get_Return(&";
+                callOpStr+= generateDeviceVarName(callee)+");\n";
+            }
             bbContent->push_back(callOpStr);
         }
         void generateInstructionBody()

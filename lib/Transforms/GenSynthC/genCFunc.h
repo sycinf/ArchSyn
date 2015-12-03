@@ -28,6 +28,7 @@ using namespace std;
 #define DIRTCLEND "#DIRECTIVEEND:"
 #define DRIVERBEGIN "#DRIVERBEGIN:"
 #define DRIVEREND "#DRIVEREND:"
+
 namespace GenCFunc {
 
     // this two keeps track of if argument should be
@@ -37,6 +38,33 @@ namespace GenCFunc {
     static std::set<Argument*> arg2axim;
     static std::set<Argument*> arg2fifoW;
     static std::set<Argument*> arg2fifoR;
+
+    static std::string standardHLSTcl(std::string funcTop)
+    {
+        std::string actualTcl = "open_project "+funcTop+"\n";
+        actualTcl+="set_top "+funcTop+"\n";
+        actualTcl+="add_files "+funcTop+".cpp\n";
+        actualTcl+="open_solution \"solution1\"\n";
+
+        actualTcl+="set_part {";
+        actualTcl+=HLSFPGA;
+        actualTcl+="}\n";
+
+        actualTcl+="create_clock -period ";
+        actualTcl+=HLSFPGA_CLKPERIOD;
+        actualTcl+=" -name default\n";
+        actualTcl+="set_clock_uncertainty ";
+        actualTcl+=HLSFPGA_CLKUNCERTAIN;
+        actualTcl+="\n";
+
+        actualTcl+="config_compile -name_max_length 60 -pipeline_loops 1\n";
+
+        actualTcl+="source \"./directive.tcl\"\n";
+        actualTcl+="csynth_design\n";
+        actualTcl+="export_design -format ip_catalog\n";
+        return actualTcl;
+
+    }
 
     class AxiInterconnectGenerator{
     public:
@@ -532,6 +560,7 @@ namespace GenCFunc {
 
             std::string maxiInterconnect = AxiInterconnectGenerator::generateAxiConnect(maxiMasterPorts, maxiSlavePorts, axiCounter);
 
+            //FIXME: still got to connect all the clock/resets
 
             return createPro+instPS+setIpRepoPath+instantiateCores+controlAxiInterconnect+
                     connectAxiM+maxiInterconnect;
@@ -550,7 +579,7 @@ namespace GenCFunc {
                 setupStr+="setup";
                 CallInst* curCallInst = *funcIter;
                 std::string functionName = curCallInst->getCalledFunction()->getName();
-                setupStr += functionName+"(";
+                setupStr += functionName+"_dev(";
 
                 // do the setup -- we check the argument of the called function
                 // if it is using Argument from a higher level function, we pass it in
@@ -571,12 +600,58 @@ namespace GenCFunc {
                 }
                 setupStr +=");\n";
             }
+
             return setupStr;
         }
         std::string runCores(bool addMeasuringTime)
         {
             //FIXME: got to make the actual start string
-            return "";
+            // instantiate the timer, and put it in front of everything....
+            std::string timerInstantiation="";
+            if(addMeasuringTime)
+            {
+                timerInstantiation += "#define TIMER_LOAD_VALUE 0xFFFFFFFF;\n";
+                timerInstantiation += "#define TIMER_DEVICE_ID XPAR_SCUTIMER_DEVICE_ID;\n";
+                timerInstantiation += "XScuTimer Timer;\n";
+                timerInstantiation += "volatile u32 CntValue;\n";
+                timerInstantiation += "XScuTimer_Config *ConfigPtr;\n";
+                timerInstantiation += "XScuTimer* TimerInstancePtr;\n";
+                timerInstantiation += "TimerInstancePtr = &Timer;\n";
+                timerInstantiation += "ConfigPtr = XScuTimer_LookupConfig(TIMER_DEVICE_ID);\n";
+                timerInstantiation += "if(!ConfigPtr)xil_printf(\"scutimer cannot be found\\n\");\n";
+                timerInstantiation += "int Status = XScuTimer_CfgInitialize(TimerInstancePtr,ConfigPtr, ConfigPtr->BaseAddr);\n";
+                timerInstantiation += "if(Status!=XST_SUCCESS) xil_printf(\"scutimer initialization fail\\n\");\n ";
+                timerInstantiation += "XScuTimer_LoadTimer(TimerInstancePtr, TIMER_LOAD_VALUE);\n";
+                timerInstantiation += "XScuTimer_Start(TimerInstancePtr);\n";
+            }
+            // start each stage
+            std::string startAll = "";
+            std::string checkDone = "";
+
+            for(auto stageIter = hlsCores.begin(); stageIter!=hlsCores.end(); stageIter++)
+            {
+                CallInst* curStage = *stageIter;
+                Function* curStageFunc = curStage->getCalledFunction();
+                std::string devName = generateDeviceName(curStageFunc);
+                std::string devVarName = generateDeviceVarName(curStageFunc);
+                std::string startDev = devName+"_Start(&";
+                startDev+=devVarName;
+                startDev+=");\n";
+                startAll+=startDev;
+
+                std::string checkCurStage = "while(!";
+                checkCurStage += devName+"_IsDone(&";
+                checkCurStage += devVarName+"));\n";
+
+
+                checkDone += checkCurStage;
+            }
+            if(addMeasuringTime)
+            {
+                checkDone+="CntValue = XScuTimer_GetCounterValue(TimerInstancePtr);\n";
+                checkDone+="printf(\"time: %d clock cycles\\n\\r\",TIMER_LOAD_VALUE-CntValue );\n";
+            }
+            return timerInstantiation+startAll+checkDone;
         }
 
     private:
@@ -596,11 +671,202 @@ namespace GenCFunc {
             userArguments->clear();
             delete userArguments;
         }
-
-        std::string generateHLSFifoTcl()
+        std::string getFifoName()
         {
-            //FIXME: need to instantiate FIFO and connect them
-            return "";
+            Argument* writer = userArguments->back();
+            assert(arg2fifoW.count(writer) && "writer port expected");
+            return writer->getName();
+        }
+        std::string setupFifoStr()
+        {
+            if(userArguments->size()>2)
+            {
+                std::string setupFunc = "setup";
+                setupFunc+=getFifoName();
+                setupFunc+="_dev";
+                return setupFunc;
+            }
+            else
+                return "";
+        }
+
+        std::string getFifoDataType()
+        {
+            Argument* writer = userArguments->back();
+            assert(writer->getType()->isPointerTy() && "fifo arg is not pointer type\n");
+            PointerType* ptype = &cast<PointerType>(*(writer->getType()));
+            Type* actualDataType = ptype->getPointerElementType();
+            return getLLVMTypeStr(actualDataType);
+        }
+
+        void generateForkC(raw_ostream& out)
+        {
+            std::string forkC ="";
+            if(userArguments->size()>2)
+            {
+                forkC +="//";
+                forkC += FUNCBEGIN;
+                std::string fifoName = getFifoName();
+                forkC+=fifoName;
+                forkC+="\n";
+                std::string fifoDataName = fifoName+"_data";
+                std::string fifoDataType = getFifoDataType();
+
+                forkC+="void ";
+                forkC+= fifoName;
+                forkC+= "(";
+
+                int argCounter = 0;
+                std::string dataDecl=fifoDataType+" "+fifoDataName+";\n";
+                std::string readStr="";
+                std::string distributeStr="";
+                for(auto argIter = userArguments->begin(); argIter!=userArguments->end(); argIter++)
+                {
+                    Argument* curArg = *argIter;
+                    std::string curPortName = curArg->getName();
+                    std::string curTypeStr = getLLVMTypeStr(curArg->getType());
+                    if(argIter != userArguments->begin())
+                        forkC+=",";
+                    forkC+= curTypeStr;
+                    if(arg2fifoR.count(curArg))
+                    {
+                        curPortName+= boost::lexical_cast<std::string>(argCounter);
+                        distributeStr+="*";
+                        distributeStr+=curPortName;
+                        distributeStr+="=";
+                        distributeStr+=fifoDataName;
+                        distributeStr+=";\n";
+                        argCounter++;
+                    }
+                    else
+                    {
+                        readStr+=fifoDataName;
+                        readStr+="= *";
+                        readStr+=curPortName;
+                        readStr+=";\n";
+                    }
+                    forkC+=" ";
+                    forkC+=curPortName;
+
+
+                }
+                forkC+=")";
+                printTabbedLines(out,forkC);
+                printTabbedLines(out,"{");
+                addBarSubTabs(true);
+                printTabbedLines(out, dataDecl);
+                printTabbedLines(out,"while(1)");
+                printTabbedLines(out,"{");
+                addBarSubTabs(true);
+                printTabbedLines(out, readStr);
+                printTabbedLines(out, distributeStr);
+                addBarSubTabs(false);
+                printTabbedLines(out,"}");
+                addBarSubTabs(false);
+                printTabbedLines(out,"}");
+                std::string endStr = "//";
+                endStr+=FUNCEND;
+                printTabbedLines(out,endStr);
+            }
+        }
+        void generateForkTcl(raw_ostream& out)
+        {
+            std::string synthFork = "";
+            if(userArguments->size()>2)
+            {
+                std::string fifoName = getFifoName();
+                synthFork+="/*\n";
+                synthFork+=FUNCTCLBEGIN;
+                synthFork+="\n";
+                std::string synthTcl = standardHLSTcl(fifoName);
+                synthFork+= synthTcl;
+                synthFork+= FUNCTCLEND;
+                synthFork+="\n";
+                synthFork+="*/\n";
+            }
+            printTabbedLines(out,synthFork);
+
+        }
+        void generateForkDirTcl(raw_ostream& out)
+        {
+            std::string dirStr="";
+            if(userArguments->size()>2)
+            {
+                dirStr+="/*\n";
+                dirStr+=DIRTCLBEGIN;
+                dirStr+="\n";
+                // for every port, make it ap_fifo
+
+
+                std::string directiveStrHead = "set_directive_interface -mode ";
+                dirStr+=directiveStrHead;
+                dirStr+="s_axilite -register \"";
+                dirStr+=getFifoName();
+                dirStr+="\"";
+                dirStr+="\n";
+
+                std::string fifoIntfDir = directiveStrHead+"ap_fifo \"";
+                fifoIntfDir+=getFifoName();
+                fifoIntfDir+="\" ";
+                int argCounter=0;
+                for(auto argIter = userArguments->begin(); argIter!=userArguments->end(); argIter++)
+                {
+                    Argument* curArg = *argIter;
+                    std::string curArgName = curArg->getName();
+                    if(arg2fifoR.count(curArg))
+                    {
+                        curArgName+=boost::lexical_cast<std::string>(argCounter);
+                        argCounter++;
+                    }
+                    dirStr+=fifoIntfDir;
+                    dirStr+=curArgName;
+                    dirStr+="\n";
+                }
+                dirStr+=DIRTCLEND;
+                dirStr+="\n";
+                dirStr+="*/\n";
+            }
+            printTabbedLines(out, dirStr);
+
+        }
+        void generateForkDriver(raw_ostream& out)
+        {
+            if(userArguments->size()>2)
+            {
+                printTabbedLines(out,"/*");
+                printTabbedLines(out,DRIVERBEGIN);
+
+                std::string deviceName = getFifoName();
+                std::string deviceVarName = getFifoName()+"_dev";
+                std::string deviceDec = deviceName+" "+deviceVarName+";";
+                std::string driverHeader= deviceName+".h";
+                boost::algorithm::to_lower(driverHeader);
+                printTabbedLines(out,"#include \""+driverHeader+"\"");
+                printTabbedLines(out,deviceDec);
+                std::string setupFuncName = this->setupFifoStr();
+                std::string setupDevice="void "+setupFuncName+"()";
+                printTabbedLines(out,setupDevice);
+                printTabbedLines(out,"{");
+                addBarSubTabs(true);
+                printTabbedLines(out,"int status="+deviceName+"_Initialize(&"+deviceVarName+",0);");
+                printTabbedLines(out, "if(status!=XST_SUCCESS)xil_printf(\"cannot initialize "+ deviceName +"\");");
+                addBarSubTabs(false);
+                printTabbedLines(out,"}");
+                printTabbedLines(out,DRIVEREND);
+                printTabbedLines(out,"*/");
+            }
+        }
+
+        void generateHLSFifo(raw_ostream& out)
+        {
+            // more than just tcl, also the c code for distibution
+            generateForkC(out);
+            errs()<<"done fork\n";
+            generateForkTcl(out);
+            errs()<<"done tcl\n";
+            generateForkDirTcl(out);
+            errs()<<"done dir\n";
+            generateForkDriver(out);
         }
     private:
         // things to handle in fifo generation
@@ -708,8 +974,9 @@ namespace GenCFunc {
 
                         // give the function name to the hls top level generator
                         hlsTG->addStageFunction(curCallInst);
+                        if(curCallInst->getCalledFunction()->getReturnType()->isVoidTy())
+                            specialExclude[insIter]="";
 
-                        specialExclude[insIter]="";
                     }
 
                 }
@@ -736,10 +1003,30 @@ namespace GenCFunc {
                 // make all the driver stuff -----
                 // this include the timing measurement stuff?
                 // all that would be placed in prefix
+
                 std::string setupStr = hlsTG->setupCores();
-                std::string runStr = hlsTG->runCores(false);
+                std::string runStr = hlsTG->runCores(true);
+                std::string runFifoStr ="";
+                for(auto fifoGenIter = hlsFifoG.begin(); fifoGenIter!=hlsFifoG.end(); fifoGenIter++)
+                {
+                    HLSFifoGenerator* curHLSfg = *fifoGenIter;
+                    std::string curSetupFifoStr = curHLSfg->setupFifoStr();
+                    setupStr+=curSetupFifoStr;
+                    if(curSetupFifoStr!="")
+                    {
+                        setupStr+="();\n";
+
+                        runFifoStr+=curHLSfg->getFifoName();
+                        runFifoStr+="_Start(&";
+                        runFifoStr+=curHLSfg->getFifoName();
+                        runFifoStr+="_dev);\n";
+                    }
+
+                }
+
                 FuncGenerator::bodyPrefixStr +=setupStr;
                 FuncGenerator::bodyPrefixStr +="\n";
+                FuncGenerator::bodyPrefixStr +=runFifoStr;
                 FuncGenerator::bodyPrefixStr += runStr;
                 //
             }
@@ -753,23 +1040,26 @@ namespace GenCFunc {
             // to memory, they will need to be connected to axi interconnect
             std::string hlsTopLevel = hlsTG->generateDefaultTopLevelTcl();
 
-            std::string fifoInst ="";
+
+            std::string tclBegin="/*\n";
+            tclBegin+=FUNCTCLBEGIN;
+            printTabbedLines(out_cfile,tclBegin);
+            printTabbedLines(out_cfile,hlsTopLevel);
+            //printTabbedLines(out_cfile,fifoInst);
+            std::string tclEnd=FUNCTCLEND;
+            tclEnd+="\n*/";
+            printTabbedLines(out_cfile,tclEnd);
+
+
+        }
+        void generateHLSTopLevelFifoInComment()
+        {
             // create the fifos -- and connect to the cores by doing all the look up
             for(auto fifoGenIter = this->hlsFifoG.begin(); fifoGenIter!= hlsFifoG.end(); fifoGenIter++)
             {
                 HLSFifoGenerator* curFifoGen = *fifoGenIter;
-                fifoInst+=curFifoGen->generateHLSFifoTcl();
+                curFifoGen->generateHLSFifo(out_cfile);
             }
-
-            std::string directiveBegin="/*\n";
-            directiveBegin+=DIRTCLBEGIN;
-            printTabbedLines(out_cfile,directiveBegin);
-            printTabbedLines(out_cfile,hlsTopLevel);
-            printTabbedLines(out_cfile,fifoInst);
-            std::string directiveEnd=DIRTCLEND;
-            directiveEnd+="\n*/";
-            printTabbedLines(out_cfile,directiveEnd);
-
 
         }
 
@@ -781,6 +1071,7 @@ namespace GenCFunc {
             if(!getGeneratingCPU())
             {
                 generateHLSTopLevelInComment();
+                generateHLSTopLevelFifoInComment();
             }
 
         }
@@ -948,27 +1239,8 @@ namespace GenCFunc {
             tclBegin+=FUNCTCLBEGIN;
             printTabbedLines(out_cfile,tclBegin);
             std::string funcTop = func->getName();
-            std::string actualTcl = "open_project "+funcTop+"\n";
-            actualTcl+="set_top "+funcTop+"\n";
-            actualTcl+="add_files "+funcTop+".cpp\n";
-            actualTcl+="open_solution \"solution1\"\n";
 
-            actualTcl+="set_part {";
-            actualTcl+=HLSFPGA;
-            actualTcl+="}\n";
-
-            actualTcl+="create_clock -period ";
-            actualTcl+=HLSFPGA_CLKPERIOD;
-            actualTcl+=" -name default\n";
-            actualTcl+="set_clock_uncertainty ";
-            actualTcl+=HLSFPGA_CLKUNCERTAIN;
-            actualTcl+="\n";
-
-            actualTcl+="config_compile -name_max_length 60 -pipeline_loops 1\n";
-
-            actualTcl+="source \"./directive.tcl\"\n";
-            actualTcl+="csynth_design\n";
-            actualTcl+="export_design -format ip_catalog\n";
+            std::string actualTcl= standardHLSTcl(funcTop);
             printTabbedLines(out_cfile,actualTcl);
 
             std::string tclEnd =  FUNCTCLEND;
@@ -1057,11 +1329,9 @@ namespace GenCFunc {
             printTabbedLines(out_cfile,"/*");
             printTabbedLines(out_cfile,DRIVERBEGIN);
 
-            std::string deviceName = "X";
-            std::string funcName=func->getName();
-            deviceName+=funcName;
-            deviceName.at(1)=toupper(deviceName.at(1));
-            std::string deviceVarName = funcName+"_dev";
+            std::string deviceName = generateDeviceName(func);
+            std::string deviceVarName = generateDeviceVarName(func);
+
             std::string deviceDec = deviceName+" "+deviceVarName+";";
 
             std::string driverHeader= deviceName+".h";
@@ -1069,7 +1339,7 @@ namespace GenCFunc {
             printTabbedLines(out_cfile,"#include \""+driverHeader+"\"");
 
             printTabbedLines(out_cfile,deviceDec);
-
+            std::string funcName = func->getName();
             std::string setupDevice="void setup"+funcName+"_dev(";
             // need to figure out the argument used for intializing
             // we have kept track of those worthy of initializing when
@@ -1094,6 +1364,11 @@ namespace GenCFunc {
 
             printTabbedLines(out_cfile,"int status="+deviceName+"_Initialize(&"+deviceVarName+",0);");
             printTabbedLines(out_cfile, "if(status!=XST_SUCCESS)xil_printf(\"cannot initialize "+ deviceName +"\");");
+
+
+
+
+
             std::set<Argument*> all2BeInited;
             all2BeInited.insert(funcArg2BeInitialized.begin(),funcArg2BeInitialized.end());
             all2BeInited.insert(funcArg2BeInitialized_offset.begin(),funcArg2BeInitialized_offset.end());

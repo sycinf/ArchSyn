@@ -136,6 +136,24 @@ static std::string generateVivadoStartEndGroupStr(std::string content)
     return realStr;
 }
 
+static std::string generateDeviceName(Function* devFunc)
+{
+    std::string deviceName = "X";
+    std::string funcName=devFunc->getName();
+    deviceName+=funcName;
+    deviceName.at(1)=toupper(deviceName.at(1));
+    return deviceName;
+
+}
+static std::string generateDeviceVarName(Function* devFunc)
+{
+    std::string funcName = devFunc->getName();
+
+    std::string deviceVarName = funcName+"_dev";
+    return deviceVarName;
+}
+
+
 static std::string generateVariableName(Instruction* ins)
 {
     int seqNum = getInstructionSeqNum(ins);
