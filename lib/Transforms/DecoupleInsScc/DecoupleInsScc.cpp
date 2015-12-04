@@ -27,19 +27,19 @@
 #include "generatePartitions.h"
 #include "generateNewFunctions.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
-
+#include "llvm/Transforms/BoostException.h"
 #include <boost/lexical_cast.hpp>
 #include <math.h>
 #include <algorithm>
 using namespace llvm;
-
+/*
 namespace boost{
     void throw_exception(std::exception const & e)
     {
         DIS_MSG<<"boost exception";
         exit(1);
     }
-}
+}*/
 
 namespace partGen {
         DAGNode::~DAGNode()

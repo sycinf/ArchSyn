@@ -5,16 +5,18 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
 #include "llvm/Transforms/DecoupleMemAccess/DecoupleMemAccess.h"
+#include "llvm/Transforms/BoostException.h"
+#include "llvm/IR/Instructions.h"
 using namespace llvm;
 
 
-namespace boost{
+/*namespace boost{
     void throw_exception(std::exception const & e)
     {
         errs()<<"boost exception";
         exit(1);
     }
-}
+}*/
 
 namespace {
     struct DecoupleMemAccess : public ModulePass {
@@ -25,49 +27,46 @@ namespace {
         }
         bool runOnModule(Module &M) override
         {
-            // look at each generated function, each a load is followed by writing
-            // to a pointer
-            // argument with attribute denoting it to be write channel "CHANNELWR"
+            // LOAD: look at each generated function, each a load is followed by writing
+            // to a pointer argument with attribute denoting it to be write channel "CHANNELWR"
             // we change the load:
-            // 0. replace the original CHANNELWR channel with an address chanel
-            // 1. to a address write to a address channel (which is newly added)
-            //
-            // 2. create a function where the the address is the only input
-            //    and memory value is the only output
-            //
-            // 3. add the function to the pendingAdd list
-            //
-            // 4, in the case of burst, instead of the address channel, we have a channel
-            //    of struct cncompassing address and size
-            //    the original loop where the address is generated is examined to see
-            //    if the address generation can be collapsed out of the loop
-            //    this means if the loop is a simple adding counter to some base
-            //    address, then the entire loop can be replaced with generation
-            //    of base address and size, on the other hand, if there are other stuff
-            //    going on in the loop, we try to see if the address generation can be
-            //    separated -- meaning have it one level up before the rest of the loop
-            //
-            // 5, to facilitate test using thread model, the newly generated function
-            //    will keep looping til address=0 is received
-            //
-            // 5.5 add all the newly created function to the module
-            // 6, leave the top level function (teh transformed function) to the end
-            //    allocate a few more things for address transport, and call the newly
-            //    generated function
-            //=========================================================================
+            // 0. replace the original CHANNELWR channel with an address port and a size port (optional)
+            // 1. in the absence of burst, replace the load instruction with an address write to
+            // the address port
+            // 2. in the presence of burst, move load outside of the involved loop and make one
+            // address write + one size write
+            // 3. add in new function to read memory and write to fifo....the same fifo the downstream
+            // guys are reading -- this newly added function would break them into reasonable bursts
+            // STORE: let's not do this first
+            // 0. replace the original store with an address port and a size port(optional) and a data port
+            // 1. in the case of burst, address req get moved outside but actual data is written into the
+            // data port as they get created
             // newly created memory access function
             std::vector<Function*> memoryAccessFunctions;
             // top level functions layout pipeline accessed at the end
             std::vector<Function*> pipelineLevelFunctions;
             for(auto funcIter = M.begin(); funcIter!=M.end(); funcIter++)
             {
-                Function* curFunc = &(*funcIter);
+                Function& curFunc = *funcIter;
                 // iterate through the basicblocks and see if the loaded value
                 // is written to a channel out put
-                std::vector<Instruction*> allStreamingMemoryOps;
-                for(auto bbIter = curFunc->begin(); bbIter!= curFunc->end(); bbIter++)
+                std::map<Instruction*, Argument*> load2Port;
+                std::map<Instruction*, Argument*> store2Port;
+                for(auto bbIter = curFunc.begin(); bbIter!= curFunc.end(); bbIter++)
                 {
+                    BasicBlock& curBB = *bbIter;
+                    for(auto insIter = curBB.begin(); insIter!=curBB.end(); insIter++)
+                    {
+                        Instruction& curIns = *insIter;
+                        if(isa<LoadInst>(curIns))
+                        {
 
+                        }
+                        else if(isa<StoreInst>(curIns))
+                        {
+
+                        }
+                    }
                 }
             }
 

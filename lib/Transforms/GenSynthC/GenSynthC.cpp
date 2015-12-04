@@ -7,16 +7,17 @@
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
 #include "GenCFunc.h"
 #include "GenCFuncUtil.h"
+#include "llvm/Transforms/BoostException.h"
 using namespace llvm;
 using namespace GenCFunc;
 
-namespace boost{
+/*namespace boost{
     void throw_exception(std::exception const & e)
     {
         errs()<<"boost exception";
         exit(1);
     }
-}
+}*/
 
 
 namespace {

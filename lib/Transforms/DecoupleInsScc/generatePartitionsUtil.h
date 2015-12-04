@@ -321,7 +321,7 @@ static void search4NextKeeper(BasicBlock* brSuccessor, std::vector<BasicBlock*>&
 
 // FIXME: just a place holder, this function is used to
 // calculate the latency through SCCs
-int instructionLatencyLookup(Instruction* ins)
+static int instructionLatencyLookup(Instruction* ins)
 {
     // normal instructions like "and, or , add, shift, are assigned a value of 3, multiply assigned a value of 10"
     // load and store assigned a value of 10, and 10 means one pipeline stage,
@@ -343,7 +343,7 @@ int instructionLatencyLookup(Instruction* ins)
     }
     return 1;
 }
-bool instructionExpensive(Instruction* ins)
+static bool instructionExpensive(Instruction* ins)
 {
     if(ins->mayReadFromMemory())
         return true;
@@ -369,7 +369,7 @@ bool instructionExpensive(Instruction* ins)
 }
 
 
-std::string getConstantStr(Constant& original)
+static std::string getConstantStr(Constant& original)
 {
     std::string rtStr = "";
     if(isa<ConstantFP>(original))
