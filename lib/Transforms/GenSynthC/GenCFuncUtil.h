@@ -7,6 +7,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Module.h"
 #include <boost/lexical_cast.hpp>
+#include "llvm/Transforms/Utils/ArchSynUtils.h"
 using namespace llvm;
 static int numTabs =0;
 
@@ -110,23 +111,7 @@ static std::string generateConstantStr(Constant& original)
     }
     return rtStr;
 }
-bool cmpChannelAttr(AttributeSet as, int argSeqNum, std::string channelStr)
-{
-    std::string argAttr = as.getAsString(argSeqNum+1);
-    std::string channelAttrStr = "\"";
-    channelAttrStr +=channelStr;
-    channelAttrStr +="\"";
-    return argAttr == channelAttrStr;
-}
 
-bool isArgChannel(Argument* curFuncArg)
-{
-    Function* func = curFuncArg->getParent();
-    bool isWrChannel = cmpChannelAttr(func->getAttributes(), curFuncArg->getArgNo(), CHANNELWR);
-    bool isRdChannel = cmpChannelAttr(func->getAttributes(), curFuncArg->getArgNo(), CHANNELRD);
-
-    return isWrChannel || isRdChannel;
-}
 
 static std::string generateVivadoStartEndGroupStr(std::string content)
 {

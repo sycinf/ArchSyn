@@ -33,6 +33,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/DecoupleInsScc/DecoupleInsScc.h"
+#include "llvm/Transforms/DecoupleMemAccess/DecoupleMemAccess.h"
 #include "llvm/Transforms/GenSynthC/GenSynthC.h"
 #include <algorithm>
 #include <memory>
@@ -56,8 +57,8 @@ OutputCFileName("ocfile", cl::desc("A C++ file genereated for HLS"),
                 cl::value_desc("filename"));
 
 static cl::opt<bool>
-NoControlFlowDup("disable-cf-dup",
-                 cl::desc("Do not duplicate control flows between different stages"));
+Burst("burst",
+                 cl::desc("burst memory access when possible"));
 
 // the decoupling will be the same
 // but the back end for generating C file will be a bit different
@@ -67,6 +68,10 @@ NoControlFlowDup("disable-cf-dup",
 static cl::opt<bool>
 GenerateCPUMode("cpu-mode",
                   cl::desc("generate the decoupled functions which would be run by the cpu"));
+
+static cl::opt<bool>
+NoControlFlowDup("disable-cf-dup",
+                 cl::desc("Do not duplicate control flows between different stages"));
 
 static cl::opt<bool>
 NoOutput("disable-output",
@@ -99,14 +104,17 @@ int main(int argc, char **argv) {
   INITIALIZE_PASS_DEPENDENCY(PostDominatorTree)
   INITIALIZE_PASS_DEPENDENCY(LoopInfo)
 
+
   cl::ParseCommandLineOptions(argc, argv,
-    "llvm .bc -> .cpp generate decoupled processing pipeline\n");
+    "llvm .bc -> .cpp generate processing pipeline with decoupled memory access\n");
 
 
   SMDiagnostic Err;
 
   // Load the input module...
+  errs()<<"before parsing\n";
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
+  errs()<<"after parsing\n";
   //M.reset(ParseIRFile(InputFilename, Err, Context));
 
   if (M.get() == 0) {
@@ -184,8 +192,9 @@ int main(int argc, char **argv) {
   // the first pass is to generate multiple function from a single function
   // the second pass is to generate the synthesizable C version for each generated function
 
-
   Passes.add(llvm::createDecoupleInsSccPass(!NoControlFlowDup));
+
+  Passes.add(llvm::createDecoupleMemAccessPass(Burst));
 
   Passes.add(createPrintModulePass(Out->os()));
   if(!OutputCFileName.empty())
