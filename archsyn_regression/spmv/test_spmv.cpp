@@ -2,15 +2,15 @@
 #include<stdlib.h>
 #define DIM 50
 #define SPARSITY 2
-double spmv( double* y,  int* ptr,  double* valArray,  int* indArray, double* xvec, int dim);
-double spmv_sw(double* y, int* ptr, double* valArray, int* indArray, double* xvec, int dim)
+float spmv( float* y,  int* ptr,  float* valArray,  int* indArray, float* xvec, int dim);
+float spmv_sw(float* y, int* ptr, float* valArray, int* indArray, float* xvec, int dim)
 {
 	int kbegin = 0;
-	double rtVal = 0.0;
+	float rtVal = 0.0;
 	for(int s=0; s<dim; s++)
 	{
 		int kend = ptr[s];
-		double curY = 0.0;
+		float curY = 0.0;
 		for(int k=kbegin; k<kend; k++)
 		{
 			curY=curY+valArray[k]*xvec[indArray[k]];
@@ -34,19 +34,19 @@ int main()
 		ptr[i] = totalNum;
 	}
 
-	double* xvec = (double*)malloc(DIM*sizeof(double));
+	float* xvec = (float*)malloc(DIM*sizeof(float));
 	for(i=0; i<DIM; i++)
 	{
-		xvec[i] = (double)(i);
+		xvec[i] = (float)(i);
 	}
 	int* indArray;
-	double* valArray;
+	float* valArray;
 
-	valArray=(double*) malloc(totalNum*sizeof(double));
+	valArray=(float*) malloc(totalNum*sizeof(float));
 	int j;
 	for(j=0; j<totalNum; j++)
 	{
-		valArray[j] = (double)(rand()%DIM);
+		valArray[j] = (float)(rand()%DIM);
 	}
 
 	indArray=(int*)malloc(totalNum*sizeof(int));
@@ -54,12 +54,12 @@ int main()
 	for(k=0; k<totalNum; k++)
 		indArray[k]=rand()%DIM;
 
-	double* y = (double*)malloc(DIM*sizeof(double));
+	float* y = (float*)malloc(DIM*sizeof(float));
 	for(k=0; k<DIM; k++)
 	{
 		y[k] = 0.0;
 	}
-	double* y2 = (double*)malloc(DIM*sizeof(double));
+	float* y2 = (float*)malloc(DIM*sizeof(float));
 	for(k=0; k<DIM; k++)
 	{
 		y2[k] = 0.0;
