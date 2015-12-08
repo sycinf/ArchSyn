@@ -63,7 +63,8 @@ namespace partGen{
                                        Instruction* retInstPtr,
                                        int seqNum,
                                        std::map<Instruction*,Value*>& ins2AllocatedChannel,
-                                       std::vector<Value*>* argList
+                                       std::vector<Value*>* argList,
+                                       std::map<Value*,int>& numReaders
                                        );
 
         void collectPartitionFuncArgPerBB(std::set<Value*>& topFuncArg,
@@ -86,7 +87,8 @@ namespace partGen{
         void completePhiNodes();
         Function* generateFunction(int seqNum,
                                    std::map<Instruction*,Value*>& ins2AllocatedChannel,
-                                   std::vector<Value*>* argList);
+                                   std::vector<Value*>* argList,
+                                   std::map<Value*,int>& numReaders);
         Value* mapOldValue2NewValueInNewFunction(Value* oldVal);
         BasicBlock* searchNewIncomingBlock(BasicBlock* originalPred);
     };

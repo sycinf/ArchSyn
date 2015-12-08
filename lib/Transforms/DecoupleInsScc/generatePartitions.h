@@ -114,7 +114,9 @@ namespace partGen{
         void setupBBStructure();
         Function* generateDecoupledFunction(int seqNum,
                                             std::map<Instruction*,Value*>& ins2Channel,
-                                            std::vector<Value*>* argList);
+                                            std::vector<Value*>* argList,
+                                            std::map<Value*,int>& numReaders
+                                            );
 
 
     };

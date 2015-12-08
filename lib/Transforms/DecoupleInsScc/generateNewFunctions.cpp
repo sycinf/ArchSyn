@@ -25,7 +25,8 @@ namespace partGen{
                                    Instruction* retInstPtr,
                                    int seqNum,
                                    std::map<Instruction*,Value*>& ins2AllocatedChannel,
-                                   std::vector<Value*>* argList)
+                                   std::vector<Value*>* argList,
+                                   std::map<Value*,int>& numReaders)
 
     {
         LLVMContext& context = part->top->targetFunc->getContext();
@@ -115,7 +116,12 @@ namespace partGen{
                     errs()<<*oldIns<<"\n";
                     assert(ins2AllocatedChannel.find(oldIns)!=ins2AllocatedChannel.end()
                             &&"partition does not see allocated channel");
-                    argList->push_back(ins2AllocatedChannel[oldIns]);
+                    Value* wrchannelAllocated = ins2AllocatedChannel[oldIns];
+                    if(numReaders.count(wrchannelAllocated))
+                        numReaders[wrchannelAllocated]+=1;
+                    else
+                        numReaders[wrchannelAllocated]=1;
+                    argList->push_back(wrchannelAllocated);
                 }
                 else
                 {
@@ -559,7 +565,8 @@ namespace partGen{
 
     Function* DppFunctionGenerator::generateFunction(int seqNum,
                                                      std::map<Instruction*,Value*>& ins2AllocatedChannel,
-                                                     std::vector<Value*>* argList)
+                                                     std::vector<Value*>* argList,
+                                                     std::map<Value*,int>& numReaders)
     {
         std::set<Value*> topFuncArg;
         std::set<Instruction*> srcInstFromOtherPart;
@@ -569,7 +576,7 @@ namespace partGen{
         collectPartitionFuncArguments(topFuncArg,srcInstFromOtherPart,instToOtherPart, retInstPtr);
 
         addedFunction = addFunctionSignature(topFuncArg,srcInstFromOtherPart,instToOtherPart,retInstPtr,seqNum,
-                                             ins2AllocatedChannel, argList);
+                                             ins2AllocatedChannel, argList,numReaders);
 
 
         createNewFunctionBBs(retInstPtr!=0);

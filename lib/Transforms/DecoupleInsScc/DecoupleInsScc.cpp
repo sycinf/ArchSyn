@@ -614,13 +614,14 @@ errs()<<"\t\t\t\t\t\t after generate BB List : \n";
 
         Function* DAGPartition::generateDecoupledFunction(int seqNum,
                                                           std::map<Instruction*,Value*>& ins2AllocatedChannel,
-                                                          std::vector<Value*>* argList
+                                                          std::vector<Value*>* argList,
+                                                          std::map<Value*,int>& numReaders
                                                           )
         {
 
             /**** end of check ************/
             struct DppFunctionGenerator dpg(this);
-            return dpg.generateFunction(seqNum,ins2AllocatedChannel,argList);
+            return dpg.generateFunction(seqNum,ins2AllocatedChannel,argList,numReaders);
 
 
         }
@@ -951,52 +952,66 @@ errs()<<"\t\t\t\t\t\t after generate BB List : \n";
                 // before we generate function for all of them, in case things get added
                 curPartition->setupBBStructure();
 
-                //Function* generatedFunc = curPartition->generateDecoupledFunction(k,ins2AllocatedChannel,curFuncArgList);
-                //generatedFunctions.push_back(generatedFunc);
-                //ins2ArgList[generatedFunc] = curFuncArgList;
-
             }
             BasicBlock* newSingleBB = BasicBlock::Create(this->targetFunc->getContext(),"newStreamTypeBB",this->targetFunc);
 
             newReplacementBBBuilder = new IRBuilder<>(newSingleBB);
-
+            std::map<Value*, int> numReaders;
+            // we fist check how many read port each channel may have
             for(unsigned k = 0; k<collectedPartition.size(); k++)
             {
                 DAGPartition* curPartition = collectedPartition.at(k);
                 std::vector<Value*>* curFuncArgList = new std::vector<Value*>();
-                Function* generatedFunc = curPartition->generateDecoupledFunction(k,ins2AllocatedChannel,curFuncArgList);
+                Function* generatedFunc = curPartition->generateDecoupledFunction(k,ins2AllocatedChannel,curFuncArgList,numReaders);
                 generatedFunctions.push_back(generatedFunc);
                 ins2ArgList[generatedFunc] = curFuncArgList;
-
             }
-
-
-            //FIXME: the data structure for passing things around
-            // need to be alloca'ed -- we first need to know
-            // what are being passed around, this should be retrieved when we are creating functions
-            //
-            // so how do we do this? we will create a vector for each function
-            // one for incoming value, one for out going value -- all corresponding to instructions
-            // now we count how many needs to be communicated, and for each, how many outgoing
-            // port are there, we can allocate a particular structure, it would be
-            // consisted of one pointer connected to the producer and multiple pointers
-            // connected to the consumers
-            //
-
-
-            //FIXME: now we have all the newly generated function
-            // let's just delete what ever BB we originally have
-            // and replace them with a straight line bb calling
-            // each function in succession
-            // do the alloca
-            for(auto allocaIter = ins2AllocatedChannel.begin(); allocaIter!=ins2AllocatedChannel.end(); allocaIter++)
+            // make adjustment -- this is to check all the allocated Channel
+            // some of them would have multiple users, for those, we will need
+            // to allocate extra spaces for that
+/*
+            for(auto numReaderIter = numReaders.begin(); numReaderIter!=numReaders.end(); numReaderIter++)
             {
-                Value* actualAlloca = allocaIter->second;
-                AllocaInst* curAllocaInst = &(cast<AllocaInst>(*actualAlloca));
-                errs()<<"insert "<<*curAllocaInst<<"\n";
-                //curAllocaInst->insertBefore(newSingleBB->begin());
+                Value* curWrChannel = numReaderIter->first;
+                int curReader = numReaderIter->second;
+                if(curReader>1)
+                {
+
+                    std::vector<Value*> allRdChannels;;
+                    assert(isa<AllocaInst>(*curWrChannel) && "channel not an allocaInst");
+                    AllocaInst& alreadyAllocated = cast<AllocaInst>(*curWrChannel);
+                    Type* allocatedEleType = alreadyAllocated.getType()->getElementType();
+                    // create a new fifo function
+
+                    // iterate through the function to arglistMap and find the funcArgList
+                    // needing replacement
+                    int replaced = 0;
+                    for(auto ins2ArgListIter = ins2ArgList.begin(); ins2ArgListIter!= ins2ArgList.end(); ins2ArgListIter++)
+                    {
+                        Function* generatedFunc = ins2ArgListIter->first;
+                        std::vector<Value*>* argList = ins2ArgListIter->second;
+                        auto channelInList = std::find(argList->begin(),argList->end(), curWrChannel);
+
+                        if(channelInList!=argList->end())
+                        {
+                            int seqNum = channelInList-argList->begin();
+                            // check if it is a read channel
+                            if(cmpChannelAttr(generatedFunc->getAttributes(),seqNum,CHANNELWR))
+                                ;
+                            else
+                            {
+                                AllocaInst* replaced = newReplacementBBBuilder->CreateAlloca(allocatedEleType);
+                                argList->at(seqNum) = replaced;
+                                replaced++;
+                                allRdChannels.push_back(replaced);
+                            }
+                        }
+                    }
+                    //very simple fifo distribution function
+                    //Function*
+                }
             }
-            errs()<<"done inserting alloca insts\n";
+*/
 
             unsigned correspondingPartitionInd = 0;
             CallInst* topReturn=0;
