@@ -11,4 +11,5 @@ add_llvm_library( LLVMGenSynthC
   GenCFunc.h
   GenCFuncUtil.h
   GenCInsn.h
+  GenHLSTcl.h
   )

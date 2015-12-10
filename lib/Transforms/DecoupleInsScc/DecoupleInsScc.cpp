@@ -840,6 +840,9 @@ errs()<<"\t\t\t\t\t\t after generate BB List : \n";
             {
                 std::string legal = bbi->getName();
                 std::replace(legal.begin(),legal.end(),'.','_');
+                char firstChar = *(legal.begin());
+                if(firstChar == '_')
+                    legal = "p_"+legal;
                 bbi->setName(legal);
                 usedBbNames.insert(legal);
             }
@@ -915,7 +918,6 @@ errs()<<"\t\t\t\t\t\t after generate BB List : \n";
                 {
                     errs()<<"not topologically sorted\n";
                     exit(1);
-
                 }
 
             }

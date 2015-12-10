@@ -120,14 +120,18 @@ static std::string generateVivadoStartEndGroupStr(std::string content)
     realStr+="\nendgroup\n";
     return realStr;
 }
+static std::string appendCapXCapFirstLetter(std::string originalStr)
+{
+    std::string rtStr = "X"+originalStr;
+    rtStr.at(1)=toupper(rtStr.at(1));
+    for(int decapInd = 2; decapInd<rtStr.size(); decapInd++)
+        rtStr.at(decapInd)=tolower(rtStr.at(decapInd));
+    return rtStr;
+}
 
 static std::string generateDeviceName(Function* devFunc)
 {
-    std::string deviceName = "X";
-    std::string funcName=devFunc->getName();
-    deviceName+=funcName;
-    deviceName.at(1)=toupper(deviceName.at(1));
-    return deviceName;
+    return appendCapXCapFirstLetter(devFunc->getName());
 
 }
 static std::string generateDeviceVarName(Function* devFunc)
