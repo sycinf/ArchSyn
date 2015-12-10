@@ -16,7 +16,7 @@ float spmv_sw(float* y, int* ptr, float* valArray, int* indArray, float* xvec, i
 			curY=curY+valArray[k]*xvec[indArray[k]];
 		}
 		y[s] = curY;
-		int kbegin = kend;
+		kbegin = kend;
 		rtVal = curY;
 	}
 	return rtVal;
