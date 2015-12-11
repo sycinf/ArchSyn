@@ -441,6 +441,7 @@ namespace GenCFunc {
                         }
                         GenTCL::HLSFifoGenerator* curFifoGen = new GenTCL::HLSFifoGenerator(userArguments);
                         hlsFifoG.push_back(curFifoGen);
+                        hlsTG->addFifoGen(curFifoGen);
 
                         specialExclude[insIter]="";
                     }
@@ -538,6 +539,14 @@ namespace GenCFunc {
             }
 
         }
+        void generateFifoInstantiationConnection()
+        {
+            for(auto fifoGenIter = this->hlsFifoG.begin(); fifoGenIter!= hlsFifoG.end(); fifoGenIter++)
+            {
+                GenTCL::HLSFifoGenerator* curFifoGen = *fifoGenIter;
+                curFifoGen->generateFifoInstantiationConnection(out_cfile);
+            }
+        }
 
         void generateFunction()
         {
@@ -548,6 +557,7 @@ namespace GenCFunc {
             {
                 generateHLSTopLevelInComment();
                 generateHLSTopLevelFifoInComment();
+                generateFifoInstantiationConnection();
             }
 
         }

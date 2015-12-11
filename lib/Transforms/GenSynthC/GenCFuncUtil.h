@@ -171,6 +171,24 @@ std::string generateFifoChannelInfoName(Instruction* insn, User* user)
     return generateFifoChannelName(insn)+"_info"+boost::lexical_cast<std::string>(seq);
 
 }
+int getLLVMTypeWidth(Type* Ty)
+{
+    switch(Ty->getTypeID())
+    {
+        case Type::IntegerTyID: {
+            return cast<IntegerType>(Ty)->getBitWidth();
+
+        }
+        case Type::FloatTyID:
+            return 32;
+        case Type::DoubleTyID:
+            return 64;
+        llvm_unreachable("Invalid TypeID");
+    }
+
+
+}
+
 
 std::string getLLVMTypeStr(Type *Ty, bool forceCPU = false) {
   bool cpuInt=getGeneratingCPU();
