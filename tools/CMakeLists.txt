@@ -16,6 +16,7 @@ endif()
 
 add_llvm_tool_subdirectory(opt)
 add_llvm_tool_subdirectory(gen-dpp)
+add_llvm_tool_subdirectory(gen-par)
 add_llvm_tool_subdirectory(gen-sync)
 add_llvm_tool_subdirectory(decoup-mem)
 add_llvm_tool_subdirectory(llvm-as)
