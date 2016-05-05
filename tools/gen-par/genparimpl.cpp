@@ -67,6 +67,7 @@ int main(int argc, char **argv) {
   LLVMContext &Context = getGlobalContext();
 
   PassRegistry &Registry = *PassRegistry::getPassRegistry();
+  initializeAnalysis(Registry);
   //initializeInstructionGraphPass(Registry);
   INITIALIZE_PASS_DEPENDENCY(DependenceAnalysis)
   //INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
@@ -112,8 +113,8 @@ int main(int argc, char **argv) {
   // we will need two passes
   // the first pass is to generate multiple function from a single function
   // the second pass is to generate the synthesizable C version for each generated function
-
-
+  Passes.add(llvm::createBasicAliasAnalysisPass());
+  Passes.add(llvm::createDependenceAnalysisPass());
   Passes.add(llvm::createGenParPass(Out->os()));
 
 
