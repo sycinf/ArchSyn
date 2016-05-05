@@ -493,7 +493,7 @@ namespace GenCFunc {
                     {
                         setupStr+="();\n";
 
-                        runFifoStr+=curHLSfg->getFifoName();
+                        runFifoStr+=appendCapXCapFirstLetter(curHLSfg->getFifoName());
                         runFifoStr+="_Start(&";
                         runFifoStr+=curHLSfg->getFifoName();
                         runFifoStr+="_dev);\n";
@@ -546,6 +546,15 @@ namespace GenCFunc {
                 GenTCL::HLSFifoGenerator* curFifoGen = *fifoGenIter;
                 curFifoGen->generateFifoInstantiationConnection(out_cfile);
             }
+            if(hlsFifoG.size()>0)
+            {
+                // there are some fifos
+                GenTCL::HLSFifoGenerator::generateRstClkConnection(out_cfile);
+            }
+            if(GenTCL::arg2axim.size()>0)
+                GenTCL::HLSTopLevelGenerator::generateIncludeSegment(out_cfile);
+            GenTCL::HLSTopLevelGenerator::generateClkFreqIncrease(out_cfile);
+
         }
 
         void generateFunction()

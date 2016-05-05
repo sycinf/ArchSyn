@@ -839,10 +839,10 @@ errs()<<"\t\t\t\t\t\t after generate BB List : \n";
             else
             {
                 std::string legal = bbi->getName();
-                std::replace(legal.begin(),legal.end(),'.','_');
-                char firstChar = *(legal.begin());
-                if(firstChar == '_')
-                    legal = "p_"+legal;
+                std::replace(legal.begin(),legal.end(),'.','x');
+                //char firstChar = *(legal.begin());
+                /*if(firstChar == '_')
+                    legal = "p_"+legal;*/
                 bbi->setName(legal);
                 usedBbNames.insert(legal);
             }

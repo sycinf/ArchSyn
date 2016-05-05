@@ -455,7 +455,7 @@ namespace GenCFunc {
             else
             {
                 callOpStr+=generateDeviceName(callee);
-                callOpStr+="_Get_Return(&";
+                callOpStr+="_Get_return(&";
                 callOpStr+= generateDeviceVarName(callee)+");\n";
             }
             bbContent->push_back(callOpStr);

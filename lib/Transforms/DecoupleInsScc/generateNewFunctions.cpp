@@ -97,7 +97,10 @@ namespace partGen{
                 curArg->setName(oldVal->getName());
                 argList->push_back(oldVal);
                 B.addAttribute(NORMALARGATTR);
-
+                // also we want to add the original arguments attribute
+                Argument& oldArg = cast<Argument>(*oldVal);
+                if(oldArg.hasNoCaptureAttr())
+                    B.addAttribute(Attribute::NoCapture);
             }
             else
             {

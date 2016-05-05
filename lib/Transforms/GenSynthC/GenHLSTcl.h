@@ -122,10 +122,67 @@ namespace GenTCL{
             connectInterfaces+=slave;
             connectInterfaces+="]\n";
             return connectInterfaces;
-
         }
 
-        static std::string generateAxiConnect(
+        static std::string drivenAutobd(std::string masterName, std::string slaveName, bool master)
+        {
+            std::string autobdstr = "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config {";
+            if(master)
+                autobdstr+="Master";
+            else
+                autobdstr+="Slave";
+            autobdstr+=" \"/";
+            if(master)
+                autobdstr+=masterName;
+            else
+                autobdstr+=slaveName;
+            autobdstr+="\" Clk \"Auto\" }";
+            autobdstr+=" [get_bd_intf_pins ";
+            if(master)
+                autobdstr+=slaveName;
+            else
+                autobdstr+=masterName;
+            autobdstr+="]\n";
+            return autobdstr;
+        }
+        static std::string oneToManyAuto( std::vector<std::string>& masterPorts,
+                                                   std::vector<std::string>& slavePorts)
+        {
+            // we'd do automatic connection
+            // if there is only one master, we apply the same master automation multiple times each
+            // time with a different slave -- this would all connect them to the same interconnect
+            std::string rtStr = "";
+            assert(masterPorts.size()>0 && "no master port\n");
+            std::string firstMasterPort = *masterPorts.begin();
+
+            if(masterPorts.size()==1)
+            {
+                for(auto slaveIter = slavePorts.begin(); slaveIter!=slavePorts.end(); slaveIter++)
+                {
+                    std::string curSlave = *slaveIter;
+                    rtStr+=drivenAutobd(firstMasterPort,curSlave,true);
+                }
+            }
+            else if(slavePorts.size()==1)
+            {
+                // if there are more than one master, but one slave, we would do the master automation
+                // for the first master, and then do the slave driven automation for the remaining masters
+                std::string slavePort = *slavePorts.begin();
+                rtStr+=drivenAutobd(firstMasterPort,slavePort,true);
+                for(auto masterIter = masterPorts.begin()+1; masterIter!=masterPorts.end(); masterIter++)
+                {
+                    std::string curMaster = *masterIter;
+                    rtStr+=drivenAutobd(curMaster,slavePort,false);
+                }
+            }
+            else
+            {
+                llvm_unreachable("N2N interconnect ");
+            }
+            return rtStr;
+        }
+
+        static std::string generateAxiConnectN2N(
                                               std::vector<std::string>& masterPorts,
                                               std::vector<std::string>& slavePorts,
                                               int counter)
@@ -177,6 +234,24 @@ namespace GenTCL{
         }
 
 
+
+        static std::string generateAxiConnect(
+                                              std::vector<std::string>& masterPorts,
+                                              std::vector<std::string>& slavePorts,
+                                              int counter)
+        {
+            int slaveNum = masterPorts.size();
+            int masterNum = slavePorts.size();
+
+            if(slaveNum>1 && masterNum >1)
+                return generateAxiConnectN2N(masterPorts,slavePorts,counter);
+            else
+                return oneToManyAuto(masterPorts,slavePorts);
+        }
+
+
+
+
     };
 
     class HLSFifoGenerator
@@ -186,6 +261,16 @@ namespace GenTCL{
         {
             userArguments = ua;
         }
+
+        static void generateRstClkConnection(raw_ostream& out)
+        {
+            out<<"/*"<<ALLFIFOBEGIN<<"\n";
+            out<<"connect_bd_net [get_bd_pins /rst_processing_sys7_100M/peripheral_reset] [get_bd_pins */rst]\n";
+            out<<"connect_bd_net [get_bd_pins /rst_processing_sys7_100M/slowest_sync_clk] [get_bd_pins */clk]\n";
+            out<<ALLFIFOEND<<"*/\n";
+
+        }
+
 
         ~HLSFifoGenerator()
         {
@@ -409,7 +494,15 @@ namespace GenTCL{
         {
             unsigned argSeq = arg->getArgNo();
             std::string argName = arg->getName();
-            return argName+"_V";
+
+
+            if(arg->getType()->isPointerTy())
+            {
+                PointerType* pty = &cast<PointerType>(*(arg->getType()));
+                if(pty->getElementType()->isIntegerTy())
+                    argName+="_V";
+            }
+            return argName;
             //bool isRdChannel = cmpChannelAttr(arg->getParent()->getAttributes(),argSeq,CHANNELRD);
 
         }
@@ -516,11 +609,14 @@ namespace GenTCL{
             std::string forkName = getFifoName();
             std::string forkInstanceName = forkName+"_0";
             Argument* writer = userArguments->back();
+            Type* writerType = writer->getType();
+            PointerType* writerPt = &cast<PointerType>(*writerType);
             // connect fork to srcFifo
             std::string srcFifoAdaptedPort=getSrcFifoName();
             srcFifoAdaptedPort+=FIFORADP_SUFF;
             std::string writerPort = writer->getName();
-            writerPort+="_V";
+            if(writerPt->getPointerElementType()->isIntegerTy())
+                writerPort+="_V";
             std::string connectFork2SrcFifo =
                     VivadoIPGenerator::connectIntf(forkInstanceName,writerPort,srcFifoAdaptedPort,"read_to_hls_acc");
             printTabbedLines(out,connectFork2SrcFifo);
@@ -533,7 +629,8 @@ namespace GenTCL{
 
                 std::string readerPort = curReader->getName();
                 readerPort+=boost::lexical_cast<std::string>(i);
-                readerPort+="_V";
+                if(writerPt->getPointerElementType()->isIntegerTy())
+                    readerPort+="_V";
                 std::string connectFork2DstFifos =
                         VivadoIPGenerator::connectIntf(forkInstanceName,readerPort,curDstFifoAdaptedPort,"write_from_hls_acc");
                 printTabbedLines(out, connectFork2DstFifos);
@@ -602,7 +699,22 @@ namespace GenTCL{
         {
             allFifoGens.push_back(fg);
         }
-
+        static void generateIncludeSegment(raw_ostream& out)
+        {
+            out<<"/*"<<ALLFIFOBEGIN<<"\n";
+            out<<"include_bd_addr_seg [get_bd_addr_segs -excluded */SEG_processing_sys7_ACP_M_AXI_GP0]\n";
+            out<<"include_bd_addr_seg [get_bd_addr_segs -excluded */SEG_processing_sys7_ACP_IOP]\n";
+            out<<ALLFIFOEND<<"*/\n";
+        }
+        static void generateClkFreqIncrease(raw_ostream& out)
+        {
+            std::map<std::string,std::string> clkPro;
+            clkPro["PCW_FPGA0_PERIPHERAL_FREQMHZ"]="125.000000";
+            std::string setClk = VivadoIPGenerator::setIPProperty("processing_sys7",clkPro);
+            out<<"/*"<<ALLFIFOBEGIN<<"\n";
+            out<<setClk<<"\n";
+            out<<ALLFIFOEND<<"*/\n";
+        }
         std::string generateDefaultTopLevelTcl()
         {
             // this is to instantiate the default PS ip
@@ -679,7 +791,7 @@ namespace GenTCL{
 
             if( arg2axim.size()!=0)
             {
-                connectAxiM+="set_property -dict [list CONFIG.PCW_USE_S_AXI_ACP {1}] [get_bd_cells ";
+                connectAxiM+="set_property -dict [list CONFIG.PCW_USE_S_AXI_ACP {1} CONFIG.PCW_USE_DEFAULT_ACP_USER_VAL {1}] [get_bd_cells ";
                 connectAxiM+=HLSPSIPInstName;
                 connectAxiM+="]\n";
                 for(auto arg2aximIter = arg2axim.begin(); arg2aximIter!=arg2axim.end(); arg2aximIter++)
@@ -701,8 +813,6 @@ namespace GenTCL{
 
 
             std::string maxiInterconnect = AxiInterconnectGenerator::generateAxiConnect(maxiMasterPorts, maxiSlavePorts, axiCounter);
-
-            //FIXME: still got to connect all the clock/resets
 
             return createPro+instPS+setIpRepoPath+instantiateCores+controlAxiInterconnect+
                     connectAxiM+maxiInterconnect;
