@@ -1,13 +1,29 @@
-extern "C" void fdtd(int nx,int ny,int nz,
-		float* Hx,float* Hy,float* Hz,
-		float* Ex,float* Ey,float* Ez, float Cbdy, float Cbdz, float Cbdx,
-		float* Ey1, float* Ex1, float* Ez1, float* Ez2);
-void fdtd(int nx,int ny,int nz,
-		float* Hx,float* Hy,float* Hz,
-		float* Ex,float* Ey,float* Ez, float Cbdy, float Cbdz, float Cbdx,
-		float* Ey1, float* Ex1, float* Ez1, float* Ez2)
+#define nx 10
+#define ny 10
+#define nz 10
+#define HxOFF 100
+#define HyOFF 1000000
+#define HzOFF 2000000
+#define ExOFF 3000000
+#define EyOFF 4000000
+#define EzOFF 5000000
+void fdtd(
+        float* mem,
+		 float Cbdy, float Cbdz, float Cbdx
+		)
 {
     int k, j, i;
+    float* Hx = mem+HxOFF;
+    float* Hy = mem+HyOFF;
+    float* Hz = mem+HzOFF;
+    float* Ex = mem+ExOFF;
+    float* Ey = mem+EyOFF;
+    float* Ez = mem+EzOFF;
+    float* Ey1 = Ey;
+    float* Ex1 = Ex;
+    float* Ez1 = Ez;
+    float* Ez2 = Ez;
+
     float Eycur;
     float Excur;
     float Hxin;
