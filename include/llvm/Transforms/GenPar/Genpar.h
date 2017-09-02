@@ -6,7 +6,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 namespace llvm{
-    FunctionPass* createGenParPass(llvm::raw_ostream &OS);
+    FunctionPass* createGenParPass(llvm::raw_ostream &OS, bool DAInfo);
 }
 
 

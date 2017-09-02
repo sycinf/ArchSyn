@@ -52,6 +52,9 @@ static cl::opt<bool>
 NoOutput("disable-output",
          cl::desc("Do not write result bitcode file"), cl::Hidden);
 
+static cl::opt<bool>
+DAInfo("DAInfo",
+         cl::desc("print out dependence analysis info"), cl::Hidden);
 
 
 //===----------------------------------------------------------------------===//
@@ -70,12 +73,13 @@ int main(int argc, char **argv) {
   initializeAnalysis(Registry);
   //initializeInstructionGraphPass(Registry);
   INITIALIZE_PASS_DEPENDENCY(DependenceAnalysis)
-  //INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-  //INITIALIZE_PASS_DEPENDENCY(PostDominatorTree)
-  //INITIALIZE_PASS_DEPENDENCY(LoopInfo)
+  INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(PostDominatorTree)
+  INITIALIZE_PASS_DEPENDENCY(LoopInfo)
+  INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
 
   cl::ParseCommandLineOptions(argc, argv,
-    "llvm .bc -> .cpp figure out the dependency direction vectors and code for checking\n");
+    "try to perform coarse grained parallelization\n");
 
 
   SMDiagnostic Err;
@@ -115,7 +119,11 @@ int main(int argc, char **argv) {
   // the second pass is to generate the synthesizable C version for each generated function
   Passes.add(llvm::createBasicAliasAnalysisPass());
   Passes.add(llvm::createDependenceAnalysisPass());
-  Passes.add(llvm::createGenParPass(Out->os()));
+  Passes.add(llvm::createDependenceAnalysisPass());
+  Passes.add(llvm::createScalarEvolutionAliasAnalysisPass());
+
+  Passes.add(llvm::createGenParPass(Out->os(),DAInfo));
+  Passes.add(createPrintModulePass(Out->os()));
 
 
   // Before executing passes, print the final values of the LLVM options.
